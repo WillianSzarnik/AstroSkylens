@@ -1,0 +1,314 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { DeviceOrientationState, ObserverCoords } from '../types/astronomy';
+
+export const PRESET_CITIES: ObserverCoords[] = [
+  { cityName: 'São Paulo, Brasil', latitude: -23.5505, longitude: -46.6333 },
+  { cityName: 'Rio de Janeiro, Brasil', latitude: -22.9068, longitude: -43.1729 },
+  { cityName: 'Brasília, Brasil', latitude: -15.7975, longitude: -47.8919 },
+  { cityName: 'Salvador, Brasil', latitude: -12.9777, longitude: -38.5016 },
+  { cityName: 'Manaus, Brasil', latitude: -3.119, longitude: -60.0217 },
+  { cityName: 'Porto Alegre, Brasil', latitude: -30.0346, longitude: -51.2177 },
+  { cityName: 'Lisboa, Portugal', latitude: 38.7223, longitude: -9.1393 },
+  { cityName: 'Nova York, EUA', latitude: 40.7128, longitude: -74.006 },
+  { cityName: 'Tóquio, Japão', latitude: 35.6762, longitude: 139.6503 },
+  { cityName: 'Sydney, Austrália', latitude: -33.8688, longitude: 151.2093 },
+];
+
+export function useDeviceSensors() {
+  // 1. Orientation State
+  const [orientation, setOrientation] = useState<DeviceOrientationState>({
+    heading: 180, // Default pointing South
+    pitch: 35, // 35 degrees above horizon
+    roll: 0,
+    isSupported: false,
+    hasPermission: false,
+    isCalibrated: true,
+  });
+
+  // Manual orientation offset / manual joystick override
+  const [manualOffset, setManualOffset] = useState<{ heading: number; pitch: number }>({
+    heading: 180,
+    pitch: 35,
+  });
+  const [isManualControl, setIsManualControl] = useState(false);
+
+  // 2. Observer Location
+  const [location, setLocation] = useState<ObserverCoords>({
+    latitude: -23.5505,
+    longitude: -46.6333,
+    cityName: 'São Paulo, Brasil (Padrão)',
+  });
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'locating' | 'success' | 'error'>('idle');
+
+  // 3. Camera State
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // iOS orientation permission needed check
+  const [needsIosPermission, setNeedsIosPermission] = useState(false);
+
+  // Smoothing refs
+  const currentHeadingRef = useRef(180);
+  const currentPitchRef = useRef(35);
+
+  // Request GPS
+  const requestLocation = useCallback(() => {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      setLocationStatus('error');
+      return;
+    }
+
+    setLocationStatus('locating');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          altitudeMeters: pos.coords.altitude || undefined,
+          cityName: `GPS (${pos.coords.latitude.toFixed(2)}°, ${pos.coords.longitude.toFixed(2)}°)`,
+        });
+        setLocationStatus('success');
+      },
+      (err) => {
+        console.warn('Geolocation error:', err.message);
+        setLocationStatus('error');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  }, []);
+
+  // Set Manual City
+  const setCity = useCallback((city: ObserverCoords) => {
+    setLocation(city);
+    setLocationStatus('success');
+  }, []);
+
+  // Request iOS Orientation Permission
+  const requestOrientationPermission = useCallback(async () => {
+    if (
+      typeof window !== 'undefined' &&
+      typeof (DeviceOrientationEvent as any).requestPermission === 'function'
+    ) {
+      try {
+        const response = await (DeviceOrientationEvent as any).requestPermission();
+        if (response === 'granted') {
+          setOrientation((prev) => ({ ...prev, hasPermission: true, isSupported: true }));
+          setNeedsIosPermission(false);
+          setIsManualControl(false);
+        } else {
+          setNeedsIosPermission(false);
+        }
+      } catch (err) {
+        console.warn('Orientation permission error:', err);
+      }
+    }
+  }, []);
+
+  // Setup Device Orientation Listener
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    if (
+      typeof (DeviceOrientationEvent as any) !== 'undefined' &&
+      typeof (DeviceOrientationEvent as any).requestPermission === 'function'
+    ) {
+      setNeedsIosPermission(true);
+    }
+
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      if (isManualControl) return;
+
+      let compassHeading: number | null = null;
+      let pitch: number | null = null;
+      let roll: number | null = null;
+
+      // iOS webkitCompassHeading
+      if ((e as any).webkitCompassHeading != null) {
+        compassHeading = (e as any).webkitCompassHeading;
+      } else if (e.alpha != null) {
+        // Standard alpha (0 to 360)
+        compassHeading = 360 - e.alpha;
+      }
+
+      // Beta (-180 to 180): device pitch front-to-back
+      // When phone is held vertically pointing at horizon: beta ~ 90 deg -> altitude = 0
+      // When phone is pointing up to zenith: beta ~ 0 deg -> altitude = 90
+      if (e.beta != null) {
+        const rawBeta = e.beta;
+        // Map beta to astronomical altitude
+        pitch = 90 - rawBeta;
+        if (pitch < -90) pitch = -90;
+        if (pitch > 90) pitch = 90;
+      }
+
+      if (e.gamma != null) {
+        roll = e.gamma;
+      }
+
+      if (compassHeading != null && pitch != null) {
+        // Smooth interpolation (lerp)
+        const targetHeading = ((compassHeading % 360) + 360) % 360;
+        const targetPitch = Math.max(-90, Math.min(90, pitch));
+
+        // Handle 360/0 degree wraparound smoothly
+        let diff = targetHeading - currentHeadingRef.current;
+        if (diff > 180) diff -= 360;
+        if (diff < -180) diff += 360;
+
+        currentHeadingRef.current = (currentHeadingRef.current + diff * 0.35 + 360) % 360;
+        currentPitchRef.current = currentPitchRef.current + (targetPitch - currentPitchRef.current) * 0.35;
+
+        setOrientation({
+          heading: currentHeadingRef.current,
+          pitch: currentPitchRef.current,
+          roll: roll || 0,
+          isSupported: true,
+          hasPermission: true,
+          isCalibrated: true,
+        });
+      }
+    };
+
+    window.addEventListener('deviceorientation', handleOrientation, true);
+    if ('ondeviceorientationabsolute' in window) {
+      window.addEventListener('deviceorientationabsolute' as any, handleOrientation, true);
+    }
+
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation);
+      if ('ondeviceorientationabsolute' in window) {
+        window.removeEventListener('deviceorientationabsolute' as any, handleOrientation);
+      }
+    };
+  }, [isManualControl]);
+
+  // Initial GPS fetch
+  useEffect(() => {
+    requestLocation();
+  }, [requestLocation]);
+
+  // Camera Management
+  const startCamera = useCallback(async (facing: 'environment' | 'user' = cameraFacing) => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Câmera não suportada neste navegador.');
+      return;
+    }
+
+    try {
+      setCameraError(null);
+      if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: facing },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      setCameraStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+    } catch (err: any) {
+      console.warn('Camera access failed:', err);
+      setCameraError('Permissão da câmera necessária para o modo Realidade Aumentada (AR).');
+    }
+  }, [cameraFacing, cameraStream]);
+
+  // Stop Camera
+  const stopCamera = useCallback(() => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      setCameraStream(null);
+    }
+  }, [cameraStream]);
+
+  // Toggle Camera Facing
+  const toggleCameraFacing = useCallback(() => {
+    const nextFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+    setCameraFacing(nextFacing);
+    startCamera(nextFacing);
+  }, [cameraFacing, startCamera]);
+
+  // Attach stream to videoRef whenever it mounts or changes
+  const attachVideoElement = useCallback((element: HTMLVideoElement | null) => {
+    videoRef.current = element;
+    if (element && cameraStream) {
+      element.srcObject = cameraStream;
+      element.play().catch(() => {});
+    }
+  }, [cameraStream]);
+
+  // Capture current frame from camera video
+  const takeSnapshot = useCallback((): string | null => {
+    if (!videoRef.current) return null;
+    const video = videoRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return null;
+
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.min(video.videoWidth, 800);
+      canvas.height = (canvas.width * video.videoHeight) / video.videoWidth;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.85);
+    } catch (err) {
+      console.warn('Snapshot failed:', err);
+      return null;
+    }
+  }, []);
+
+  // Update manual orientation (for virtual pan/drag & joystick)
+  const updateManualOrientation = useCallback((deltaHeading: number, deltaPitch: number) => {
+    setIsManualControl(true);
+    setManualOffset((prev) => {
+      const newHeading = ((prev.heading + deltaHeading) % 360 + 360) % 360;
+      const newPitch = Math.max(-90, Math.min(90, prev.pitch + deltaPitch));
+      
+      currentHeadingRef.current = newHeading;
+      currentPitchRef.current = newPitch;
+      
+      setOrientation((o) => ({
+        ...o,
+        heading: newHeading,
+        pitch: newPitch,
+      }));
+      
+      return { heading: newHeading, pitch: newPitch };
+    });
+  }, []);
+
+  const resetToSensors = useCallback(() => {
+    setIsManualControl(false);
+  }, []);
+
+  return {
+    orientation,
+    location,
+    locationStatus,
+    cameraStream,
+    cameraFacing,
+    cameraError,
+    needsIosPermission,
+    isManualControl,
+    videoRef,
+    startCamera,
+    stopCamera,
+    toggleCameraFacing,
+    attachVideoElement,
+    takeSnapshot,
+    requestLocation,
+    setCity,
+    requestOrientationPermission,
+    updateManualOrientation,
+    resetToSensors,
+  };
+}

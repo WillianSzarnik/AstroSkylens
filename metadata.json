@@ -1,0 +1,6 @@
+{
+  "name": "AstroVision - Sky Lens & AR Planetarium",
+  "description": "Aplicativo astronômico interativo em tempo real com visualização dividida de câmera AR, giroscópio, mapa estelar com dados da NASA e modo Sky Lens com IA para identificar estrelas, planetas e constelações.",
+  "requestFramePermissions": ["camera", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
