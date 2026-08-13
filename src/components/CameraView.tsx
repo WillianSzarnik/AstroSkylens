@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Camera,
   RefreshCw,
@@ -10,6 +10,7 @@ import {
   Info,
   Layers,
   HelpCircle,
+  AlertCircle,
 } from 'lucide-react';
 import { CelestialObject, DeviceOrientationState, ObserverCoords } from '../types/astronomy';
 import { playScanSound } from '../utils/audioEffects';
@@ -67,9 +68,72 @@ export const CameraView: React.FC<CameraViewProps> = ({
   onRequestIosPermission,
   needsIosPermission,
 }) => {
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const isInitializedRef = useRef<boolean>(false);
+  const isIos = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const inIframe = typeof window !== 'undefined' && window.self !== window.top;
+
+  // Request camera on mount (works on desktop/Android; on iOS touch fallback takes over if blocked)
   useEffect(() => {
-    onStartCamera();
+    if (!isInitializedRef.current) {
+      isInitializedRef.current = true;
+      onStartCamera();
+    }
   }, [onStartCamera]);
+
+  // Robustly bind cameraStream to video element and handle autoplay on iOS/WebKit
+  useEffect(() => {
+    const video = localVideoRef.current;
+    if (!video) return;
+
+    if (cameraStream) {
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('webkit-playsinline', 'true');
+      video.muted = true;
+      video.defaultMuted = true;
+      video.playsInline = true;
+      video.srcObject = cameraStream;
+
+      const playVideo = async () => {
+        try {
+          await video.play();
+        } catch (err) {
+          console.warn('Video autoPlay prevented or delayed:', err);
+        }
+      };
+
+      video.addEventListener('loadedmetadata', playVideo);
+      video.addEventListener('canplay', playVideo);
+      playVideo();
+
+      if (onAttachVideo) {
+        onAttachVideo(video);
+      }
+
+      return () => {
+        video.removeEventListener('loadedmetadata', playVideo);
+        video.removeEventListener('canplay', playVideo);
+      };
+    } else {
+      video.srcObject = null;
+      if (onAttachVideo) {
+        onAttachVideo(null);
+      }
+    }
+  }, [cameraStream, onAttachVideo]);
+
+  const handleActivateAll = () => {
+    onStartCamera();
+    if (needsIosPermission && onRequestIosPermission) {
+      onRequestIosPermission();
+    }
+  };
+
+  const handleOpenNewTab = () => {
+    if (typeof window !== 'undefined') {
+      window.open(window.location.href, '_blank');
+    }
+  };
 
   const headingText = `${Math.round(orientation.heading)}° ${getCardinal(orientation.heading)}`;
   const altitudeText = `${Math.round(orientation.pitch)}°`;
@@ -82,53 +146,79 @@ export const CameraView: React.FC<CameraViewProps> = ({
         isNightVision ? 'night-vision-filter' : ''
       }`}
     >
-      {/* 1. Camera Video Feed or Fallback Simulator */}
-      {cameraStream ? (
-        <video
-          id="ar-camera-feed"
-          ref={onAttachVideo}
-          autoPlay
-          playsInline
-          muted
-          className={`w-full h-full object-cover ${
-            cameraFacing === 'user' ? 'scale-x-[-1]' : ''
-          }`}
-        />
-      ) : (
+      {/* 1. Camera Video Feed (always present to prevent lifecycle detach) */}
+      <video
+        id="ar-camera-feed"
+        ref={localVideoRef}
+        autoPlay
+        playsInline
+        muted
+        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+          cameraStream ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        } ${cameraFacing === 'user' ? 'scale-x-[-1]' : ''}`}
+      />
+
+      {/* Fallback / Permission Request Overlay if no active stream */}
+      {!cameraStream && (
         <div
           id="camera-fallback"
-          className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-[#050505] via-[#08080a] to-[#050505] p-6 text-center"
+          className="absolute inset-0 w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-[#050505] via-[#08080a] to-[#050505] p-6 text-center z-10"
         >
           <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-cyan-400 mb-4 shadow-xl">
-            <Camera className="w-8 h-8 animate-pulse" />
+            {cameraError ? (
+              <AlertCircle className="w-8 h-8 text-amber-400 animate-pulse" />
+            ) : (
+              <Camera className="w-8 h-8 animate-pulse" />
+            )}
           </div>
           <h3 className="text-sm font-bold tracking-tight text-zinc-100 uppercase mb-1">
-            Visualizador AR do Céu Noturno
+            {cameraError ? 'Acesso à Câmera Requerido' : 'Visualizador AR do Céu Noturno'}
           </h3>
           <p className="text-xs text-zinc-400 max-w-xs mb-4">
             {cameraError ||
-              'Ative a câmera para ver os astros e constelações sobrepostos em Realidade Aumentada (AR).'}
+              (isIos
+                ? 'No iPhone, toque no botão abaixo para autorizar o acesso à câmera traseira e giroscópio no Safari.'
+                : 'Permita o uso da câmera para sobrepor as estrelas, planetas e constelações em tempo real na abóbada celeste.')}
           </p>
-          <div className="flex flex-wrap gap-2 justify-center">
+
+          <div className="flex flex-col sm:flex-row flex-wrap gap-2.5 justify-center items-center">
             <button
               id="btn-enable-camera"
-              onClick={onStartCamera}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-mono font-semibold tracking-wider transition shadow-lg flex items-center gap-2 cursor-pointer"
+              onClick={handleActivateAll}
+              className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-mono font-bold tracking-wider transition shadow-lg flex items-center gap-2 cursor-pointer active:scale-95"
             >
               <Camera className="w-4 h-4" />
-              ATIVAR CÂMERA
+              <span>{cameraError ? 'TENTAR NOVAMENTE' : 'ATIVAR CÂMERA & AR'}</span>
             </button>
+
+            {inIframe && (
+              <button
+                id="btn-open-in-new-tab"
+                onClick={handleOpenNewTab}
+                title="Abrir diretamente no Safari"
+                className="px-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-cyan-400 border border-zinc-700 rounded-xl text-xs font-mono font-semibold tracking-wider transition shadow-md flex items-center gap-2 cursor-pointer"
+              >
+                <span>ABRIR NO SAFARI (NOVA ABA)</span>
+              </button>
+            )}
+
             {needsIosPermission && (
               <button
                 id="btn-ios-gyro-perm"
                 onClick={onRequestIosPermission}
-                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-xl text-xs font-mono font-semibold tracking-wider transition shadow-md flex items-center gap-2 cursor-pointer"
+                className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-xl text-xs font-mono font-semibold tracking-wider transition shadow-md flex items-center gap-2 cursor-pointer"
               >
                 <Compass className="w-4 h-4 text-cyan-400" />
-                ATIVAR GIROSCÓPIO
+                <span>AUTORIZAR SENSORES</span>
               </button>
             )}
           </div>
+
+          {isIos && (
+            <div className="mt-4 p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800/80 text-[11px] text-zinc-400 max-w-xs leading-relaxed">
+              <strong className="text-zinc-200">Dica iOS:</strong> Caso apareça a mensagem de bloqueio, verifique em <em>Ajustes &gt; Safari &gt; Câmera (Permitir)</em> ou abra o link em uma nova aba no Safari.
+            </div>
+          )}
         </div>
       )}
 

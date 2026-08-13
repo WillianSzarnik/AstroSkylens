@@ -45,6 +45,7 @@ export function useDeviceSensors() {
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
 
   // iOS orientation permission needed check
   const [needsIosPermission, setNeedsIosPermission] = useState(false);
@@ -191,44 +192,118 @@ export function useDeviceSensors() {
 
   // Camera Management
   const startCamera = useCallback(async (facing: 'environment' | 'user' = cameraFacing) => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      setCameraError('Câmera não suportada neste navegador.');
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setCameraError('A API de câmera não está disponível neste navegador. Abra o app em uma aba separada (HTTPS/Safari).');
       return;
     }
 
     try {
       setCameraError(null);
-      if (cameraStream) {
-        cameraStream.getTracks().forEach((track) => track.stop());
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+        cameraStreamRef.current = null;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: facing },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
+      let stream: MediaStream | null = null;
+      let lastError: any = null;
 
+      // Strategy 1: iOS Safari friendly facingMode ideal
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facing },
+          },
+          audio: false,
+        });
+      } catch (e1) {
+        lastError = e1;
+        console.warn('Strategy 1 failed:', e1);
+      }
+
+      // Strategy 2: Simple facingMode string
+      if (!stream) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: facing,
+            },
+            audio: false,
+          });
+        } catch (e2) {
+          lastError = e2;
+          console.warn('Strategy 2 failed:', e2);
+        }
+      }
+
+      // Strategy 3: Unconstrained video (universal fallback for iOS / legacy webviews)
+      if (!stream) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        } catch (e3) {
+          lastError = e3;
+          console.warn('Strategy 3 failed:', e3);
+        }
+      }
+
+      if (!stream) {
+        throw lastError || new Error('Não foi possível obter o stream de vídeo.');
+      }
+
+      cameraStreamRef.current = stream;
       setCameraStream(stream);
+
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(() => {});
+        const vid = videoRef.current;
+        vid.setAttribute('playsinline', 'true');
+        vid.setAttribute('webkit-playsinline', 'true');
+        vid.muted = true;
+        vid.defaultMuted = true;
+        vid.playsInline = true;
+        vid.srcObject = stream;
+        
+        try {
+          await vid.play();
+        } catch (playErr) {
+          console.warn('Video play() after stream assignment:', playErr);
+        }
       }
     } catch (err: any) {
-      console.warn('Camera access failed:', err);
-      setCameraError('Permissão da câmera necessária para o modo Realidade Aumentada (AR).');
+      console.warn('Camera access error:', err);
+      const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const inIframe = window.self !== window.top;
+
+      if (inIframe && isIos) {
+        setCameraError(
+          'O iOS Safari bloqueia a câmera dentro de iFrames. Toque no botão abaixo para abrir em uma Nova Aba.'
+        );
+      } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setCameraError(
+          'Permissão negada no navegador. No iOS, vá em Ajustes > Safari > Câmera e permita o acesso.'
+        );
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setCameraError('Nenhum sensor de câmera encontrado no dispositivo.');
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        setCameraError('A câmera está ocupada por outro aplicativo.');
+      } else {
+        setCameraError('Não foi possível iniciar a câmera. Abra o app diretamente no Safari em uma nova aba.');
+      }
     }
-  }, [cameraFacing, cameraStream]);
+  }, [cameraFacing]);
 
   // Stop Camera
   const stopCamera = useCallback(() => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach((track) => track.stop());
-      setCameraStream(null);
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
     }
-  }, [cameraStream]);
+    setCameraStream(null);
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
 
   // Toggle Camera Facing
   const toggleCameraFacing = useCallback(() => {
@@ -240,11 +315,11 @@ export function useDeviceSensors() {
   // Attach stream to videoRef whenever it mounts or changes
   const attachVideoElement = useCallback((element: HTMLVideoElement | null) => {
     videoRef.current = element;
-    if (element && cameraStream) {
-      element.srcObject = cameraStream;
+    if (element && cameraStreamRef.current) {
+      element.srcObject = cameraStreamRef.current;
       element.play().catch(() => {});
     }
-  }, [cameraStream]);
+  }, []);
 
   // Capture current frame from camera video
   const takeSnapshot = useCallback((): string | null => {
