@@ -4,6 +4,7 @@ import { DeviceOrientationState, ObserverCoords } from '../types/astronomy';
 import { calculateSubsolarPoint, getLST } from '../utils/astronomyEngine';
 import { playClickSound } from '../utils/audioEffects';
 import { useDraggable } from '../hooks/useDraggable';
+import { WORLD_REAL_LANDMASSES } from '../data/worldMapGeoData';
 
 interface EarthGlobeWidgetProps {
   observer: ObserverCoords;
@@ -11,95 +12,6 @@ interface EarthGlobeWidgetProps {
   isNightVision: boolean;
   className?: string;
 }
-
-// Vector polygons of continents [lat, lon]
-const CONTINENTS_DATA: { name: string; rings: [number, number][][] }[] = [
-  // South America
-  {
-    name: 'América do Sul',
-    rings: [
-      [
-        [12, -72], [11, -63], [7, -58], [4, -51], [-1, -48], [-4, -36],
-        [-10, -36], [-15, -39], [-23, -42], [-30, -50], [-38, -57], [-46, -66],
-        [-54, -68], [-55, -73], [-50, -75], [-42, -74], [-30, -71], [-18, -70],
-        [-10, -78], [-4, -81], [2, -79], [8, -77], [12, -72],
-      ],
-    ],
-  },
-  // North America & Central America
-  {
-    name: 'América do Norte',
-    rings: [
-      [
-        [71, -156], [70, -130], [68, -90], [58, -62], [48, -53], [44, -64],
-        [35, -75], [26, -80], [29, -89], [25, -97], [20, -97], [16, -92],
-        [9, -78], [15, -88], [21, -106], [32, -117], [40, -124], [49, -125],
-        [58, -136], [60, -148], [65, -168], [71, -156],
-      ],
-      // Greenland
-      [
-        [83, -30], [77, -18], [68, -26], [60, -44], [67, -54], [78, -68], [83, -30],
-      ],
-    ],
-  },
-  // Africa
-  {
-    name: 'África',
-    rings: [
-      [
-        [37, 10], [32, 32], [28, 34], [15, 42], [12, 51], [2, 45],
-        [-5, 39], [-15, 40], [-26, 33], [-34, 18], [-33, 27], [-22, 14],
-        [-8, 13], [4, 9], [6, 2], [5, -4], [15, -17], [26, -15],
-        [35, -6], [37, 10],
-      ],
-      // Madagascar
-      [
-        [-12, 49], [-25, 47], [-25, 43], [-14, 47], [-12, 49],
-      ],
-    ],
-  },
-  // Eurasia
-  {
-    name: 'Eurásia',
-    rings: [
-      [
-        [70, 28], [76, 60], [77, 105], [72, 140], [66, 170], [55, 140],
-        [43, 132], [38, 120], [30, 122], [22, 114], [14, 109], [1, 104],
-        [15, 96], [22, 89], [10, 79], [23, 69], [25, 56], [30, 48],
-        [36, 36], [41, 29], [46, 14], [36, -5], [44, -1], [48, -4],
-        [54, 8], [60, 10], [60, 25], [70, 28],
-      ],
-      // Great Britain
-      [
-        [58, -4], [52, 1], [50, -5], [58, -4],
-      ],
-      // Japan
-      [
-        [44, 144], [35, 140], [33, 130], [38, 138], [44, 144],
-      ],
-    ],
-  },
-  // Australia & New Zealand
-  {
-    name: 'Oceania',
-    rings: [
-      [
-        [-12, 132], [-14, 136], [-25, 151], [-37, 150], [-38, 140],
-        [-34, 115], [-22, 114], [-15, 124], [-12, 132],
-      ],
-    ],
-  },
-  // Antarctica
-  {
-    name: 'Antártida',
-    rings: [
-      [
-        [-65, -60], [-70, -10], [-68, 60], [-66, 110], [-68, 150],
-        [-72, -170], [-72, -120], [-65, -60],
-      ],
-    ],
-  },
-];
 
 export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
   observer,
@@ -287,46 +199,45 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     }
     ctx.stroke();
 
-    // 3. Continents Landmass Polygons (Segment-based to prevent cross-sphere slicing)
-    ctx.fillStyle = isNightVision ? 'rgba(185, 28, 28, 0.4)' : 'rgba(34, 197, 94, 0.32)';
-    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.75)' : 'rgba(74, 222, 128, 0.7)';
+    // 3. Continents Landmass Polygons (Real Coastlines)
+    ctx.fillStyle = isNightVision ? 'rgba(185, 28, 28, 0.45)' : 'rgba(16, 185, 129, 0.38)';
+    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.8)' : 'rgba(52, 211, 153, 0.8)';
     ctx.lineWidth = 1.0;
 
-    CONTINENTS_DATA.forEach((continent) => {
-      continent.rings.forEach((ring) => {
-        // Step 1: Stroke visible segment paths
-        ctx.beginPath();
-        for (let i = 0; i < ring.length; i++) {
-          const p1 = ring[i];
-          const p2 = ring[(i + 1) % ring.length];
-          const pt1 = project3D(p1[0], p1[1]);
-          const pt2 = project3D(p2[0], p2[1]);
+    WORLD_REAL_LANDMASSES.forEach((landmass) => {
+      const ring = landmass.points;
+      // Step 1: Stroke visible segment paths
+      ctx.beginPath();
+      for (let i = 0; i < ring.length; i++) {
+        const p1 = ring[i];
+        const p2 = ring[(i + 1) % ring.length];
+        const pt1 = project3D(p1[0], p1[1]);
+        const pt2 = project3D(p2[0], p2[1]);
 
-          if (pt1.visible && pt2.visible) {
-            ctx.moveTo(pt1.x, pt1.y);
-            ctx.lineTo(pt2.x, pt2.y);
-          }
+        if (pt1.visible && pt2.visible) {
+          ctx.moveTo(pt1.x, pt1.y);
+          ctx.lineTo(pt2.x, pt2.y);
         }
-        ctx.stroke();
+      }
+      ctx.stroke();
 
-        // Step 2: Fill contiguous visible polygon
-        ctx.beginPath();
-        let fillStarted = false;
-        ring.forEach(([lat, lon]) => {
-          const pt = project3D(lat, lon);
-          if (pt.visible) {
-            if (!fillStarted) {
-              ctx.moveTo(pt.x, pt.y);
-              fillStarted = true;
-            } else {
-              ctx.lineTo(pt.x, pt.y);
-            }
+      // Step 2: Fill contiguous visible polygon
+      ctx.beginPath();
+      let fillStarted = false;
+      ring.forEach(([lat, lon]) => {
+        const pt = project3D(lat, lon);
+        if (pt.visible) {
+          if (!fillStarted) {
+            ctx.moveTo(pt.x, pt.y);
+            fillStarted = true;
+          } else {
+            ctx.lineTo(pt.x, pt.y);
           }
-        });
-        if (fillStarted) {
-          ctx.fill();
         }
       });
+      if (fillStarted) {
+        ctx.fill();
+      }
     });
 
     // 4. Solar Day/Night Terminator Shading

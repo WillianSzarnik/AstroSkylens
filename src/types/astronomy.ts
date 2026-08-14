@@ -101,7 +101,49 @@ export interface NasaApodData {
   copyright?: string;
 }
 
-export type ViewMode = 'split' | 'camera_full' | 'sky_full' | 'lens_focus';
+export type ViewMode = 'camera_full' | 'split' | 'sky_full' | 'earth_orbit' | 'lens_focus';
+
+export interface SkyFiltersState {
+  showConstellationLines: boolean;
+  showConstellationNames: boolean;
+  showStars: boolean;
+  showStarNames: boolean;
+  showPlanets: boolean;
+  showSatellites: boolean;
+  showMotionTrails: boolean;
+  showEcliptic: boolean;
+  showGrid: boolean;
+}
+
+export interface SatelliteOrbitData {
+  id: string;
+  name: string;
+  noradId: number;
+  type: string;
+  altitudeKm: number;
+  speedKmH: number;
+  periodMinutes: number;
+  inclinationDeg: number;
+  color: string;
+  description: string;
+  currentLat: number;
+  currentLon: number;
+  footprintRadiusKm: number;
+  trajectory: [number, number][]; // [lat, lon] points for ground track
+}
+
+export interface SatellitePassPrediction {
+  satelliteId: string;
+  satelliteName: string;
+  cityName: string;
+  startTime: Date;
+  maxAltitude: number;
+  durationMinutes: number;
+  magnitude: number;
+  direction: string;
+  isFlyoverImminent: boolean;
+  minutesUntilPass: number;
+}
 
 export interface MotionPathPoint {
   timeOffsetHours: number;

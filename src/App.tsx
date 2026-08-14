@@ -3,6 +3,7 @@ import {
   CelestialObject,
   SkyLensResult,
   ViewMode,
+  SkyFiltersState,
 } from './types/astronomy';
 import {
   getAllVisibleObjects,
@@ -12,6 +13,7 @@ import {
 import { useDeviceSensors } from './hooks/useDeviceSensors';
 import { CameraView } from './components/CameraView';
 import { CelestialMap } from './components/CelestialMap';
+import { EarthOrbitView } from './components/EarthOrbitView';
 import { HeaderNav } from './components/HeaderNav';
 import { SkyLensModal } from './components/SkyLensModal';
 import { NasaGalleryModal } from './components/NasaGalleryModal';
@@ -21,11 +23,27 @@ import { VirtualJoystick } from './components/VirtualJoystick';
 import { CompassRose } from './components/CompassRose';
 import { EarthGlobeWidget } from './components/EarthGlobeWidget';
 import { SplitResizer } from './components/SplitResizer';
+import { SplashScreen } from './components/SplashScreen';
 import { useFullscreen } from './hooks/useFullscreen';
 import { playLockOnSound, playClickSound } from './utils/audioEffects';
 import { Gamepad2, Sparkles, Navigation2, Compass, Globe } from 'lucide-react';
 
+const DEFAULT_SKY_FILTERS: SkyFiltersState = {
+  showConstellationLines: true,
+  showConstellationNames: true,
+  showStars: true,
+  showStarNames: true,
+  showPlanets: true,
+  showSatellites: true,
+  showMotionTrails: true,
+  showEcliptic: true,
+  showGrid: true,
+};
+
 export default function App() {
+  // Splash Screen State (shown every time the page loads to request permissions)
+  const [showSplash, setShowSplash] = useState<boolean>(true);
+
   // 1. Device sensors & Hardware state
   const {
     orientation,
@@ -48,8 +66,32 @@ export default function App() {
     resetToSensors,
   } = useDeviceSensors();
 
-  // 2. UI Layout & View modes
-  const [viewMode, setViewMode] = useState<ViewMode>('split'); // 'split' (default), 'camera_full', 'sky_full'
+  // Handle requesting all required hardware permissions when user interacts with Splash Screen
+  const handleRequestAllPermissions = useCallback(async () => {
+    try {
+      // 1. Request motion/gyroscope permission (iOS DeviceOrientation / web sensors)
+      await requestOrientationPermission();
+    } catch (e) {
+      console.warn('Orientation permission notice:', e);
+    }
+
+    try {
+      // 2. Request Camera stream for AR HUD
+      await startCamera();
+    } catch (e) {
+      console.warn('Camera permission notice:', e);
+    }
+
+    try {
+      // 3. Request GPS location for astronomical precision
+      requestLocation();
+    } catch (e) {
+      console.warn('Location permission notice:', e);
+    }
+  }, [requestOrientationPermission, startCamera, requestLocation]);
+
+  // 2. UI Layout & View modes (1. AR Camera, 2. Split, 3. Sky Map, 4. Earth Orbit)
+  const [viewMode, setViewMode] = useState<ViewMode>('camera_full');
   const [splitRatio, setSplitRatio] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('astrovision_split_ratio');
@@ -62,11 +104,35 @@ export default function App() {
     }
     return 0.5;
   });
+
   const [isNightVision, setIsNightVision] = useState<boolean>(false);
   const [showArHud, setShowArHud] = useState<boolean>(true);
   const [showVirtualJoystick, setShowVirtualJoystick] = useState<boolean>(false);
-  const [showCompass, setShowCompass] = useState<boolean>(true);
+  const [showCompass, setShowCompass] = useState<boolean>(false);
   const [showGlobe, setShowGlobe] = useState<boolean>(false);
+
+  // Sky Filters state (Constellations, Star Systems, Planets, Satellites, Trails, etc.)
+  const [skyFilters, setSkyFilters] = useState<SkyFiltersState>(() => {
+    try {
+      const saved = localStorage.getItem('astrovision_sky_filters');
+      if (saved) return { ...DEFAULT_SKY_FILTERS, ...JSON.parse(saved) };
+    } catch {
+      // ignore
+    }
+    return DEFAULT_SKY_FILTERS;
+  });
+
+  const handleUpdateSkyFilters = useCallback((partial: Partial<SkyFiltersState>) => {
+    setSkyFilters((prev) => {
+      const updated = { ...prev, ...partial };
+      try {
+        localStorage.setItem('astrovision_sky_filters', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
+  }, []);
 
   // Fullscreen support hook
   const { isFullscreen, toggleFullscreen } = useFullscreen();
@@ -255,17 +321,17 @@ export default function App() {
         onToggleNightVision={() => setIsNightVision((v) => !v)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenNasaGallery={() => setIsNasaGalleryOpen(true)}
-        onOpenSensorGuide={() => setIsSensorGuideOpen(true)}
+        onOpenSensorGuide={() => setIsSettingsOpen(true)}
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
       />
 
-      {/* 2. Main Viewport (Split Half-and-Half or Full Screen) */}
+      {/* 2. Main Viewport */}
       <main
         id="main-viewport-container"
         className="relative flex-1 w-full h-full overflow-hidden flex flex-col bg-[#050505] touch-none select-none"
       >
-        {/* TOP HALF: Live AR Camera View */}
+        {/* OPTION 1 & 2: AR Camera View (Full Screen or Split Top Half) */}
         {(viewMode === 'split' || viewMode === 'camera_full') && (
           <div
             id="camera-half-panel"
@@ -282,6 +348,7 @@ export default function App() {
               currentTarget={currentTarget}
               angularDistance={angularDistance}
               nearbyObjects={nearbyObjects}
+              allObjects={visibleObjects}
               cameraStream={cameraStream}
               cameraError={cameraError}
               cameraFacing={cameraFacing}
@@ -295,7 +362,7 @@ export default function App() {
               onToggleArHud={() => setShowArHud((v) => !v)}
               onIdentifyWithLens={() => handleIdentifyWithLens()}
               onSelectObject={handleSelectObject}
-              onOpenSensorGuide={() => setIsSensorGuideOpen(true)}
+              onOpenSettings={() => setIsSettingsOpen(true)}
               onRequestIosPermission={requestOrientationPermission}
               needsIosPermission={needsIosPermission}
             />
@@ -312,7 +379,7 @@ export default function App() {
           />
         )}
 
-        {/* BOTTOM HALF: Interactive Celestial Planetarium & Star Map */}
+        {/* OPTION 2 & 3: Interactive Celestial Planetarium & Star Map */}
         {(viewMode === 'split' || viewMode === 'sky_full') && (
           <div
             id="sky-map-half-panel"
@@ -333,84 +400,101 @@ export default function App() {
               isManualControl={isManualControl}
               onResetToSensors={resetToSensors}
               isNightVision={isNightVision}
+              skyFilters={skyFilters}
+              onUpdateSkyFilters={handleUpdateSkyFilters}
             />
           </div>
         )}
 
-        {/* Floating Controls & Navigation HUDs */}
-        {/* Bottom-Left Controls Dock - elevated safely above iPhone home indicator */}
-        <div className="absolute bottom-3.5 left-2.5 z-30 flex flex-col gap-2 pointer-events-auto">
-          {showVirtualJoystick && (
-            <div className="animate-fade-in">
-              <VirtualJoystick
-                onManualPan={updateManualOrientation}
-                onReset={resetToSensors}
-                isManualControl={isManualControl}
-                isNightVision={isNightVision}
-              />
-            </div>
-          )}
-
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              id="btn-toggle-virtual-joystick"
-              onClick={() => {
-                playClickSound();
-                setShowVirtualJoystick((v) => !v);
-              }}
-              title={showVirtualJoystick ? 'Ocultar D-Pad Virtual' : 'Mostrar D-Pad Virtual (Controle Manual)'}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-md border text-[11px] font-mono tracking-wider transition cursor-pointer shadow-lg active:scale-95 ${
-                showVirtualJoystick || isManualControl
-                  ? 'bg-cyan-950/90 border-cyan-500/70 text-cyan-300 shadow-cyan-950/50'
-                  : 'bg-black/75 border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700'
-              }`}
-            >
-              <Gamepad2 className="w-3.5 h-3.5 text-cyan-400" />
-              <span>D-PAD</span>
-            </button>
-
-            <button
-              id="btn-toggle-compass-hud"
-              onClick={() => {
-                playClickSound();
-                setShowCompass((v) => !v);
-              }}
-              title={showCompass ? 'Ocultar Bússola' : 'Exibir Rosa dos Ventos'}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-md border text-[11px] font-mono tracking-wider transition cursor-pointer shadow-lg active:scale-95 ${
-                showCompass
-                  ? isNightVision
-                    ? 'bg-red-950/90 border-red-500/70 text-red-300 shadow-red-950/50'
-                    : 'bg-cyan-950/90 border-cyan-500/70 text-cyan-300 shadow-cyan-950/50'
-                  : 'bg-black/75 border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700'
-              }`}
-            >
-              <Compass className={`w-3.5 h-3.5 ${isNightVision ? 'text-red-400' : 'text-cyan-400'}`} />
-              <span>BÚSSOLA</span>
-            </button>
-
-            <button
-              id="btn-toggle-globe-hud"
-              onClick={() => {
-                playClickSound();
-                setShowGlobe((v) => !v);
-              }}
-              title={showGlobe ? 'Ocultar Globo Terrestre' : 'Exibir Globo da Terra 3D'}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-md border text-[11px] font-mono tracking-wider transition cursor-pointer shadow-lg active:scale-95 ${
-                showGlobe
-                  ? isNightVision
-                    ? 'bg-red-950/90 border-red-500/70 text-red-300 shadow-red-950/50'
-                    : 'bg-indigo-950/90 border-indigo-500/70 text-indigo-300 shadow-indigo-950/50'
-                  : 'bg-black/75 border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700'
-              }`}
-            >
-              <Globe className={`w-3.5 h-3.5 ${isNightVision ? 'text-red-400' : 'text-indigo-400'}`} />
-              <span>GLOBO 3D</span>
-            </button>
+        {/* OPTION 4: Earth View with Orbital Trajectories (ISS, Tiangong, Curitiba passes) */}
+        {viewMode === 'earth_orbit' && (
+          <div
+            id="earth-orbit-full-panel"
+            className="relative w-full h-full bg-[#050508] overflow-hidden animate-fade-in"
+          >
+            <EarthOrbitView
+              observer={location}
+              isNightVision={isNightVision}
+              onSelectCity={setCity}
+            />
           </div>
-        </div>
+        )}
+
+        {/* Floating Controls & Navigation HUDs (Available in AR and Sky modes) */}
+        {viewMode !== 'earth_orbit' && (
+          <div className="absolute bottom-3.5 left-2.5 z-30 flex flex-col gap-2 pointer-events-auto">
+            {showVirtualJoystick && (
+              <div className="animate-fade-in">
+                <VirtualJoystick
+                  onManualPan={updateManualOrientation}
+                  onReset={resetToSensors}
+                  isManualControl={isManualControl}
+                  isNightVision={isNightVision}
+                />
+              </div>
+            )}
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                id="btn-toggle-virtual-joystick"
+                onClick={() => {
+                  playClickSound();
+                  setShowVirtualJoystick((v) => !v);
+                }}
+                title={showVirtualJoystick ? 'Ocultar D-Pad Virtual' : 'Mostrar D-Pad Virtual (Controle Manual)'}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-md border text-[11px] font-mono tracking-wider transition cursor-pointer shadow-lg active:scale-95 ${
+                  showVirtualJoystick || isManualControl
+                    ? 'bg-cyan-950/90 border-cyan-500/70 text-cyan-300 shadow-cyan-950/50'
+                    : 'bg-black/75 border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700'
+                }`}
+              >
+                <Gamepad2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>D-PAD</span>
+              </button>
+
+              <button
+                id="btn-toggle-compass-hud"
+                onClick={() => {
+                  playClickSound();
+                  setShowCompass((v) => !v);
+                }}
+                title={showCompass ? 'Ocultar Bússola' : 'Exibir Rosa dos Ventos'}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-md border text-[11px] font-mono tracking-wider transition cursor-pointer shadow-lg active:scale-95 ${
+                  showCompass
+                    ? isNightVision
+                      ? 'bg-red-950/90 border-red-500/70 text-red-300 shadow-red-950/50'
+                      : 'bg-cyan-950/90 border-cyan-500/70 text-cyan-300 shadow-cyan-950/50'
+                    : 'bg-black/75 border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700'
+                }`}
+              >
+                <Compass className={`w-3.5 h-3.5 ${isNightVision ? 'text-red-400' : 'text-cyan-400'}`} />
+                <span>BÚSSOLA</span>
+              </button>
+
+              <button
+                id="btn-toggle-globe-hud"
+                onClick={() => {
+                  playClickSound();
+                  setShowGlobe((v) => !v);
+                }}
+                title={showGlobe ? 'Ocultar Globo Terrestre' : 'Exibir Globo da Terra 3D'}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-md border text-[11px] font-mono tracking-wider transition cursor-pointer shadow-lg active:scale-95 ${
+                  showGlobe
+                    ? isNightVision
+                      ? 'bg-red-950/90 border-red-500/70 text-red-300 shadow-red-950/50'
+                      : 'bg-indigo-950/90 border-indigo-500/70 text-indigo-300 shadow-indigo-950/50'
+                    : 'bg-black/75 border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700'
+                }`}
+              >
+                <Globe className={`w-3.5 h-3.5 ${isNightVision ? 'text-red-400' : 'text-indigo-400'}`} />
+                <span>GLOBO 3D</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Floating Draggable Widgets (Rosa dos Ventos & Globo Terrestre) */}
-        {showGlobe && (
+        {showGlobe && viewMode !== 'earth_orbit' && (
           <EarthGlobeWidget
             observer={location}
             orientation={orientation}
@@ -418,7 +502,7 @@ export default function App() {
           />
         )}
 
-        {showCompass && (
+        {showCompass && viewMode !== 'earth_orbit' && (
           <CompassRose
             orientation={orientation}
             isNightVision={isNightVision}
@@ -457,6 +541,11 @@ export default function App() {
         isNightVision={isNightVision}
         onToggleNightVision={() => setIsNightVision((v) => !v)}
         onResetOrientation={resetToSensors}
+        orientation={orientation}
+        onRequestIosPermission={requestOrientationPermission}
+        needsIosPermission={needsIosPermission}
+        skyFilters={skyFilters}
+        onUpdateSkyFilters={handleUpdateSkyFilters}
       />
 
       <SensorGuideModal
@@ -466,6 +555,14 @@ export default function App() {
         needsIosPermission={needsIosPermission}
         isNightVision={isNightVision}
       />
+
+      {/* 4. Startup Splash Screen with Loading Sequence & Hardware Permissions */}
+      {showSplash && (
+        <SplashScreen
+          onComplete={() => setShowSplash(false)}
+          onRequestPermissions={handleRequestAllPermissions}
+        />
+      )}
     </div>
   );
 }

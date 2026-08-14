@@ -15,6 +15,7 @@ import {
   ConstellationData,
   DeviceOrientationState,
   ObserverCoords,
+  SkyFiltersState,
 } from '../types/astronomy';
 import {
   CONSTELLATIONS_CATALOG,
@@ -34,6 +35,8 @@ interface CelestialMapProps {
   isManualControl: boolean;
   onResetToSensors: () => void;
   isNightVision: boolean;
+  skyFilters?: SkyFiltersState;
+  onUpdateSkyFilters?: (filters: Partial<SkyFiltersState>) => void;
 }
 
 export const CelestialMap: React.FC<CelestialMapProps> = ({
@@ -46,6 +49,8 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   isManualControl,
   onResetToSensors,
   isNightVision,
+  skyFilters,
+  onUpdateSkyFilters,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -55,12 +60,20 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.5x to 3.5x
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 }); // Manual pan in Planisphere mode
 
-  const [showConstellationLines, setShowConstellationLines] = useState<boolean>(true);
-  const [showConstellationNames, setShowConstellationNames] = useState<boolean>(true);
-  const [showStarNames, setShowStarNames] = useState<boolean>(true);
-  const [showMotionTrails, setShowMotionTrails] = useState<boolean>(true);
-  const [showEcliptic, setShowEcliptic] = useState<boolean>(true);
-  const [showGrid, setShowGrid] = useState<boolean>(true);
+  // Fallback filter toggles
+  const [localConstellationLines, setLocalConstellationLines] = useState<boolean>(true);
+  const [localMotionTrails, setLocalMotionTrails] = useState<boolean>(true);
+  const [localEcliptic, setLocalEcliptic] = useState<boolean>(true);
+
+  const showConstellationLines = skyFilters?.showConstellationLines ?? localConstellationLines;
+  const showConstellationNames = skyFilters?.showConstellationNames ?? true;
+  const showStars = skyFilters?.showStars ?? true;
+  const showStarNames = skyFilters?.showStarNames ?? true;
+  const showPlanets = skyFilters?.showPlanets ?? true;
+  const showSatellites = skyFilters?.showSatellites ?? true;
+  const showMotionTrails = skyFilters?.showMotionTrails ?? localMotionTrails;
+  const showEcliptic = skyFilters?.showEcliptic ?? localEcliptic;
+  const showGrid = skyFilters?.showGrid ?? true;
 
   // Drag tracking for manual pan
   const isDraggingRef = useRef<boolean>(false);
@@ -449,13 +462,18 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       });
     }
 
-    // 7. Plot All Celestial Objects (Planets, Moon, Sun, Stars)
+    // 7. Plot All Celestial Objects (Planets, Moon, Sun, Stars, Satellites)
     const newProjected: { obj: CelestialObject; x: number; y: number; radius: number }[] = [];
     const sorted = [...objects].sort((a, b) => b.mag - a.mag);
 
     sorted.forEach((obj) => {
       if (obj.azimuth == null || obj.altitude == null) return;
       if (projectionMode === 'planisphere' && obj.altitude < -6) return;
+
+      // Filter layer checks
+      if (obj.type === 'star' && !showStars) return;
+      if ((obj.type === 'planet' || obj.type === 'sun' || obj.type === 'moon') && !showPlanets) return;
+      if (obj.type === 'satellite' && !showSatellites) return;
 
       const pt = project(obj.azimuth, obj.altitude);
       if (!pt.inView) return;
@@ -843,7 +861,11 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
           id="btn-toggle-motion-trails"
           onClick={() => {
             playClickSound();
-            setShowMotionTrails((v) => !v);
+            if (onUpdateSkyFilters) {
+              onUpdateSkyFilters({ showMotionTrails: !showMotionTrails });
+            } else {
+              setLocalMotionTrails((v) => !v);
+            }
           }}
           title="Alternar Linhas de Movimentação e Órbitas"
           className={`flex items-center gap-1 px-2 py-1 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
@@ -860,7 +882,11 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
           id="btn-toggle-ecliptic"
           onClick={() => {
             playClickSound();
-            setShowEcliptic((v) => !v);
+            if (onUpdateSkyFilters) {
+              onUpdateSkyFilters({ showEcliptic: !showEcliptic });
+            } else {
+              setLocalEcliptic((v) => !v);
+            }
           }}
           title="Alternar Linha da Eclíptica"
           className={`flex items-center gap-1 px-2 py-1 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
@@ -875,7 +901,14 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
 
         <button
           id="btn-toggle-constellations"
-          onClick={() => setShowConstellationLines((v) => !v)}
+          onClick={() => {
+            playClickSound();
+            if (onUpdateSkyFilters) {
+              onUpdateSkyFilters({ showConstellationLines: !showConstellationLines });
+            } else {
+              setLocalConstellationLines((v) => !v);
+            }
+          }}
           title="Alternar Linhas de Constelações"
           className={`px-2 py-1 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
             showConstellationLines
@@ -887,10 +920,10 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         </button>
       </div>
 
-      {/* Selected Object Info Card at Bottom of Map */}
+      {/* Selected Object Info Card - Positioned in the Top-Center so it NEVER overlaps with bottom D-Pad or Zoom */}
       {selectedObject && (
-        <div className="absolute bottom-4 left-3 z-10 pointer-events-auto max-w-[65%] sm:max-w-md">
-          <div className="flex items-center gap-2.5 p-2 px-3 rounded-2xl bg-zinc-950/90 backdrop-blur-md border border-cyan-500/60 text-left shadow-2xl">
+        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-30 pointer-events-auto max-w-[90%] sm:max-w-md animate-fade-in">
+          <div className="flex items-center gap-2.5 p-2 px-3 rounded-2xl bg-zinc-950/95 backdrop-blur-md border border-cyan-500/70 text-left shadow-[0_4px_25px_rgba(0,0,0,0.8)]">
             <div
               className="w-3 h-3 rounded-full shrink-0 animate-pulse"
               style={{ backgroundColor: selectedObject.color || '#38bdf8' }}
@@ -908,7 +941,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
             </div>
             <button
               onClick={() => onSelectObject(selectedObject)}
-              className="p-1 rounded-lg bg-cyan-950 border border-cyan-800 text-cyan-300 hover:bg-cyan-900 transition"
+              className="p-1 rounded-lg bg-cyan-950 border border-cyan-800 text-cyan-300 hover:bg-cyan-900 transition cursor-pointer"
               title="Mais Informações"
             >
               <Info className="w-3.5 h-3.5" />
