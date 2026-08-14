@@ -20,6 +20,8 @@ import { SensorGuideModal } from './components/SensorGuideModal';
 import { VirtualJoystick } from './components/VirtualJoystick';
 import { CompassRose } from './components/CompassRose';
 import { EarthGlobeWidget } from './components/EarthGlobeWidget';
+import { SplitResizer } from './components/SplitResizer';
+import { useFullscreen } from './hooks/useFullscreen';
 import { playLockOnSound, playClickSound } from './utils/audioEffects';
 import { Gamepad2, Sparkles, Navigation2, Compass, Globe } from 'lucide-react';
 
@@ -48,11 +50,36 @@ export default function App() {
 
   // 2. UI Layout & View modes
   const [viewMode, setViewMode] = useState<ViewMode>('split'); // 'split' (default), 'camera_full', 'sky_full'
+  const [splitRatio, setSplitRatio] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('astrovision_split_ratio');
+      if (saved) {
+        const val = parseFloat(saved);
+        if (!isNaN(val) && val >= 0.2 && val <= 0.8) return val;
+      }
+    } catch {
+      // ignore
+    }
+    return 0.5;
+  });
   const [isNightVision, setIsNightVision] = useState<boolean>(false);
   const [showArHud, setShowArHud] = useState<boolean>(true);
   const [showVirtualJoystick, setShowVirtualJoystick] = useState<boolean>(false);
   const [showCompass, setShowCompass] = useState<boolean>(true);
   const [showGlobe, setShowGlobe] = useState<boolean>(false);
+
+  // Fullscreen support hook
+  const { isFullscreen, toggleFullscreen } = useFullscreen();
+
+  // Save splitRatio to localStorage
+  const handleSplitRatioChange = useCallback((newRatio: number) => {
+    setSplitRatio(newRatio);
+    try {
+      localStorage.setItem('astrovision_split_ratio', newRatio.toString());
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // 3. Selection & Celestial Calculations
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
@@ -229,17 +256,25 @@ export default function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenNasaGallery={() => setIsNasaGalleryOpen(true)}
         onOpenSensorGuide={() => setIsSensorGuideOpen(true)}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={toggleFullscreen}
       />
 
       {/* 2. Main Viewport (Split Half-and-Half or Full Screen) */}
-      <main id="main-viewport-container" className="relative flex-1 w-full h-full overflow-hidden flex flex-col bg-[#050505]">
+      <main
+        id="main-viewport-container"
+        className="relative flex-1 w-full h-full overflow-hidden flex flex-col bg-[#050505] touch-none select-none"
+      >
         {/* TOP HALF: Live AR Camera View */}
         {(viewMode === 'split' || viewMode === 'camera_full') && (
           <div
             id="camera-half-panel"
-            className={`relative w-full transition-all duration-300 ${
-              viewMode === 'split' ? 'h-1/2 border-b border-zinc-800' : 'h-full'
-            }`}
+            style={
+              viewMode === 'split'
+                ? { height: `${splitRatio * 100}%` }
+                : { height: '100%' }
+            }
+            className="relative w-full overflow-hidden transition-[height] duration-75 ease-out"
           >
             <CameraView
               orientation={orientation}
@@ -267,13 +302,26 @@ export default function App() {
           </div>
         )}
 
+        {/* MIDDLE RESIZER BAR (in Split Mode) */}
+        {viewMode === 'split' && (
+          <SplitResizer
+            splitRatio={splitRatio}
+            onRatioChange={handleSplitRatioChange}
+            isNightVision={isNightVision}
+            onDoubleReset={() => handleSplitRatioChange(0.5)}
+          />
+        )}
+
         {/* BOTTOM HALF: Interactive Celestial Planetarium & Star Map */}
         {(viewMode === 'split' || viewMode === 'sky_full') && (
           <div
             id="sky-map-half-panel"
-            className={`relative w-full transition-all duration-300 ${
-              viewMode === 'split' ? 'h-1/2 bg-[#08080a]' : 'h-full bg-[#08080a]'
-            }`}
+            style={
+              viewMode === 'split'
+                ? { height: `${(1 - splitRatio) * 100}%` }
+                : { height: '100%' }
+            }
+            className="relative w-full bg-[#08080a] overflow-hidden transition-[height] duration-75 ease-out"
           >
             <CelestialMap
               objects={visibleObjects}

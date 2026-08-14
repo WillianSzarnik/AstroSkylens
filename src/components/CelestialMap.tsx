@@ -10,6 +10,10 @@ import {
   Filter,
   Route,
   Orbit,
+  Crosshair,
+  Maximize,
+  Minimize,
+  Sliders,
 } from 'lucide-react';
 import {
   CelestialObject,
@@ -599,17 +603,17 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     isNightVision,
   ]);
 
-  // Handle Resize & Render loop
+  // Handle Resize & Render loop with ResizeObserver
   useEffect(() => {
-    const handleResize = () => {
-      const container = containerRef.current;
-      const canvas = canvasRef.current;
-      if (!container || !canvas) return;
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
 
+    const updateCanvasSize = () => {
       const rect = container.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+      canvas.width = Math.max(10, rect.width * dpr);
+      canvas.height = Math.max(10, rect.height * dpr);
 
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.scale(dpr, dpr);
@@ -617,9 +621,19 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       renderSky();
     };
 
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    updateCanvasSize();
+
+    // Use ResizeObserver for instant split-screen resizing response
+    const resizeObserver = new ResizeObserver(() => {
+      updateCanvasSize();
+    });
+    resizeObserver.observe(container);
+
+    window.addEventListener('resize', updateCanvasSize);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updateCanvasSize);
+    };
   }, [renderSky]);
 
   // Re-render when dependencies update
@@ -627,19 +641,33 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     renderSky();
   }, [renderSky]);
 
-  // Non-passive wheel and gesture listener on canvas for fluid zoom
+  // Non-passive wheel and gesture listener on canvas for fluid zoom & Safari gesture prevention
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+      const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
       setZoomLevel((prev) => Math.max(0.5, Math.min(3.5, prev * zoomFactor)));
     };
 
+    // Safari Gesture events prevention
+    const handleGestureStart = (e: Event) => e.preventDefault();
+    const handleGestureChange = (e: Event) => e.preventDefault();
+    const handleGestureEnd = (e: Event) => e.preventDefault();
+
     canvas.addEventListener('wheel', handleWheel, { passive: false });
-    return () => canvas.removeEventListener('wheel', handleWheel);
+    canvas.addEventListener('gesturestart', handleGestureStart, { passive: false });
+    canvas.addEventListener('gesturechange', handleGestureChange, { passive: false });
+    canvas.addEventListener('gestureend', handleGestureEnd, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('wheel', handleWheel);
+      canvas.removeEventListener('gesturestart', handleGestureStart);
+      canvas.removeEventListener('gesturechange', handleGestureChange);
+      canvas.removeEventListener('gestureend', handleGestureEnd);
+    };
   }, []);
 
   // Pointer Click / Touch Hit-Testing
@@ -670,7 +698,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     }
   };
 
-  // Mouse / Touch Drag Pan Handlers
+  // Mouse / Touch Drag Pan Handlers with Smooth Natural Damping
   const handleMouseDown = (e: React.MouseEvent) => {
     isDraggingRef.current = true;
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
@@ -682,8 +710,8 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     const dy = e.clientY - lastMousePosRef.current.y;
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
-    // Invert delta for natural dragging
-    const sensitivity = 0.25 / zoomLevel;
+    // Gentle natural sensitivity scale (capped so quick drags don't spin uncontrollably)
+    const sensitivity = Math.min(0.22, 0.16 / Math.sqrt(zoomLevel));
     onManualLookaround(-dx * sensitivity, dy * sensitivity);
   };
 
@@ -691,7 +719,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     isDraggingRef.current = false;
   };
 
-  // Touch Handlers with Pinch Zoom
+  // Touch Handlers with Pinch Zoom & Strict Gesture Capture
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       isDraggingRef.current = true;
@@ -709,15 +737,19 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       const dx = e.touches[0].clientX - lastMousePosRef.current.x;
       const dy = e.touches[0].clientY - lastMousePosRef.current.y;
       lastMousePosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      const sensitivity = 0.3 / zoomLevel;
+      const sensitivity = Math.min(0.24, 0.18 / Math.sqrt(zoomLevel));
       onManualLookaround(-dx * sensitivity, dy * sensitivity);
     } else if (e.touches.length === 2 && touchDistanceRef.current != null) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx, dy);
-      const factor = dist / touchDistanceRef.current;
+      if (touchDistanceRef.current > 0) {
+        const factor = dist / touchDistanceRef.current;
+        // Damp pinch factor for smooth controlled zooming
+        const smoothFactor = 1 + (factor - 1) * 0.75;
+        setZoomLevel((prev) => Math.max(0.5, Math.min(3.5, prev * smoothFactor)));
+      }
       touchDistanceRef.current = dist;
-      setZoomLevel((prev) => Math.max(0.5, Math.min(3.5, prev * factor)));
     }
   };
 
@@ -730,7 +762,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     <div
       id="celestial-map-container"
       ref={containerRef}
-      className={`relative w-full h-full overflow-hidden bg-[#08080a] select-none ${
+      className={`relative w-full h-full overflow-hidden bg-[#08080a] select-none touch-none ${
         isNightVision ? 'night-vision-filter' : ''
       }`}
     >
@@ -746,17 +778,21 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className="w-full h-full cursor-grab active:cursor-grabbing block"
+        className="w-full h-full cursor-grab active:cursor-grabbing block touch-none"
       />
 
       {/* Floating Toolbar & Status (Top-Left) */}
-      <div className="absolute top-2 left-2 flex items-center gap-1.5 z-10">
+      <div className="absolute top-2 left-2 flex items-center gap-1.5 z-10 flex-wrap">
         {/* Sync with Sensor or Manual Pan Pill */}
         {isManualControl ? (
           <button
             id="btn-re-sync-gyro"
-            onClick={onResetToSensors}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-950/90 backdrop-blur-md border border-amber-500/50 text-amber-300 text-[10px] font-mono tracking-wider shadow-lg hover:bg-amber-900 transition cursor-pointer animate-pulse"
+            onClick={() => {
+              playClickSound();
+              onResetToSensors();
+            }}
+            title="Clique para sincronizar novamente com os sensores do dispositivo (Câmera AR)"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-950/90 backdrop-blur-md border border-amber-500/60 text-amber-300 text-[10px] font-mono tracking-wider shadow-lg hover:bg-amber-900 transition cursor-pointer active:scale-95"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>RE-SINCRONIZAR GIRO</span>
@@ -767,22 +803,52 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
             <span>SINCRONIZADO C/ AR</span>
           </div>
         )}
+
+        {/* Center / Reset to Horizon or Zenith button */}
+        <button
+          id="btn-recenter-horizon"
+          onClick={() => {
+            playClickSound();
+            if (onResetToSensors) onResetToSensors();
+          }}
+          title="Recentralizar Mapa no Horizonte e Giroscópio"
+          className="p-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-zinc-800 text-zinc-400 hover:text-cyan-300 hover:border-zinc-700 shadow-md transition cursor-pointer"
+        >
+          <Crosshair className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Zoom Controls (Bottom-Right) */}
       <div className="absolute bottom-3 right-2 flex flex-col gap-1.5 z-10">
         <button
           id="btn-zoom-in"
-          onClick={() => setZoomLevel((z) => Math.min(3.5, z + 0.3))}
-          title="Aproximar Zoom"
+          onClick={() => {
+            playClickSound();
+            setZoomLevel((z) => Math.min(3.5, z + 0.3));
+          }}
+          title="Aproximar Zoom (+)"
           className="p-2 rounded-xl bg-zinc-900/90 backdrop-blur-md border border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700 shadow-lg active:scale-95 transition cursor-pointer"
         >
           <ZoomIn className="w-4 h-4" />
         </button>
         <button
+          id="btn-zoom-reset"
+          onClick={() => {
+            playClickSound();
+            setZoomLevel(1.0);
+          }}
+          title="Zoom Padrão (1.0x)"
+          className="px-1.5 py-1 rounded-xl bg-zinc-900/90 backdrop-blur-md border border-zinc-800 text-[9px] font-mono text-zinc-400 hover:text-cyan-300 shadow-lg active:scale-95 transition cursor-pointer text-center"
+        >
+          {zoomLevel.toFixed(1)}x
+        </button>
+        <button
           id="btn-zoom-out"
-          onClick={() => setZoomLevel((z) => Math.max(0.5, z - 0.3))}
-          title="Afastar Zoom"
+          onClick={() => {
+            playClickSound();
+            setZoomLevel((z) => Math.max(0.5, z - 0.3));
+          }}
+          title="Afastar Zoom (-)"
           className="p-2 rounded-xl bg-zinc-900/90 backdrop-blur-md border border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700 shadow-lg active:scale-95 transition cursor-pointer"
         >
           <ZoomOut className="w-4 h-4" />

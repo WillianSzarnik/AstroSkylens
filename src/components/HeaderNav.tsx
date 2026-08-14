@@ -6,10 +6,13 @@ import {
   Image as ImageIcon,
   Columns,
   Maximize2,
+  Minimize2,
   Globe,
   Eye,
   Sliders,
   HelpCircle,
+  Expand,
+  Shrink,
 } from 'lucide-react';
 import { DeviceOrientationState, MoonPhaseInfo, ObserverCoords, ViewMode } from '../types/astronomy';
 import { playClickSound } from '../utils/audioEffects';
@@ -25,6 +28,8 @@ interface HeaderNavProps {
   onOpenSettings: () => void;
   onOpenNasaGallery: () => void;
   onOpenSensorGuide: () => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 export const HeaderNav: React.FC<HeaderNavProps> = ({
@@ -38,6 +43,8 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   onOpenSettings,
   onOpenNasaGallery,
   onOpenSensorGuide,
+  isFullscreen = false,
+  onToggleFullscreen,
 }) => {
   return (
     <header
@@ -142,6 +149,25 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
           <span className="text-sm">{moonPhase.icon}</span>
           <span className="text-[10px] text-zinc-400">{Math.round(moonPhase.illumination * 100)}%</span>
         </div>
+
+        {/* Fullscreen Button */}
+        {onToggleFullscreen && (
+          <button
+            id="btn-toggle-fullscreen"
+            onClick={() => {
+              playClickSound();
+              onToggleFullscreen();
+            }}
+            title={isFullscreen ? 'Sair do Modo Tela Cheia' : 'Entrar em Tela Cheia (Bloqueia Gestos do Navegador)'}
+            className={`p-1.5 rounded-xl border transition cursor-pointer ${
+              isFullscreen
+                ? 'bg-cyan-950/80 border-cyan-500/50 text-cyan-300 shadow-sm shadow-cyan-950/40'
+                : 'bg-zinc-900/90 border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-800 hover:border-zinc-700'
+            }`}
+          >
+            {isFullscreen ? <Shrink className="w-4 h-4 text-cyan-400" /> : <Expand className="w-4 h-4" />}
+          </button>
+        )}
 
         {/* NASA APOD Gallery Button */}
         <button
