@@ -102,3 +102,21 @@ export interface NasaApodData {
 }
 
 export type ViewMode = 'split' | 'camera_full' | 'sky_full' | 'lens_focus';
+
+export interface MotionPathPoint {
+  timeOffsetHours: number;
+  timeLabel: string;
+  altitude: number;
+  azimuth: number;
+  isVisible: boolean;
+}
+
+export interface DiurnalMotionTrack {
+  objectId: string;
+  objectName: string;
+  color: string;
+  points: MotionPathPoint[];
+  riseAzimuth?: number;
+  setAzimuth?: number;
+  culminationAltitude?: number;
+}

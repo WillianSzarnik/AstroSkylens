@@ -18,8 +18,10 @@ import { NasaGalleryModal } from './components/NasaGalleryModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SensorGuideModal } from './components/SensorGuideModal';
 import { VirtualJoystick } from './components/VirtualJoystick';
+import { CompassRose } from './components/CompassRose';
+import { EarthGlobeWidget } from './components/EarthGlobeWidget';
 import { playLockOnSound, playClickSound } from './utils/audioEffects';
-import { Gamepad2, Sparkles, Navigation2 } from 'lucide-react';
+import { Gamepad2, Sparkles, Navigation2, Compass, Globe } from 'lucide-react';
 
 export default function App() {
   // 1. Device sensors & Hardware state
@@ -49,6 +51,8 @@ export default function App() {
   const [isNightVision, setIsNightVision] = useState<boolean>(false);
   const [showArHud, setShowArHud] = useState<boolean>(true);
   const [showVirtualJoystick, setShowVirtualJoystick] = useState<boolean>(false);
+  const [showCompass, setShowCompass] = useState<boolean>(true);
+  const [showGlobe, setShowGlobe] = useState<boolean>(false);
 
   // 3. Selection & Celestial Calculations
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
@@ -285,8 +289,9 @@ export default function App() {
           </div>
         )}
 
-        {/* Floating Virtual D-Pad / Joystick Toggle */}
-        <div className="absolute bottom-4 left-3 z-30 flex flex-col gap-2">
+        {/* Floating Controls & Navigation HUDs */}
+        {/* Bottom-Left Controls Dock */}
+        <div className="absolute bottom-4 left-3 z-30 flex flex-col gap-2 pointer-events-auto">
           {showVirtualJoystick && (
             <div className="animate-fade-in">
               <VirtualJoystick
@@ -298,23 +303,83 @@ export default function App() {
             </div>
           )}
 
-          <button
-            id="btn-toggle-virtual-joystick"
-            onClick={() => {
-              playClickSound();
-              setShowVirtualJoystick((v) => !v);
-            }}
-            title={showVirtualJoystick ? 'Ocultar D-Pad Virtual' : 'Mostrar D-Pad Virtual (Controle Manual)'}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-mono tracking-wider transition cursor-pointer shadow-lg ${
-              showVirtualJoystick || isManualControl
-                ? 'bg-cyan-950/80 border-cyan-500/60 text-cyan-300 shadow-cyan-950/50'
-                : 'bg-black/60 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-700'
-            }`}
-          >
-            <Gamepad2 className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="hidden sm:inline">D-PAD 360°</span>
-          </button>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              id="btn-toggle-virtual-joystick"
+              onClick={() => {
+                playClickSound();
+                setShowVirtualJoystick((v) => !v);
+              }}
+              title={showVirtualJoystick ? 'Ocultar D-Pad Virtual' : 'Mostrar D-Pad Virtual (Controle Manual)'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-mono tracking-wider transition cursor-pointer shadow-lg ${
+                showVirtualJoystick || isManualControl
+                  ? 'bg-cyan-950/80 border-cyan-500/60 text-cyan-300 shadow-cyan-950/50'
+                  : 'bg-black/60 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-700'
+              }`}
+            >
+              <Gamepad2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline">D-PAD</span>
+            </button>
+
+            <button
+              id="btn-toggle-compass-hud"
+              onClick={() => {
+                playClickSound();
+                setShowCompass((v) => !v);
+              }}
+              title={showCompass ? 'Ocultar Bússola' : 'Exibir Rosa dos Ventos'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-mono tracking-wider transition cursor-pointer shadow-lg ${
+                showCompass
+                  ? isNightVision
+                    ? 'bg-red-950/80 border-red-500/60 text-red-300 shadow-red-950/50'
+                    : 'bg-cyan-950/80 border-cyan-500/60 text-cyan-300 shadow-cyan-950/50'
+                  : 'bg-black/60 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-700'
+              }`}
+            >
+              <Compass className={`w-3.5 h-3.5 ${isNightVision ? 'text-red-400' : 'text-cyan-400'}`} />
+              <span className="hidden sm:inline">BÚSSOLA</span>
+            </button>
+
+            <button
+              id="btn-toggle-globe-hud"
+              onClick={() => {
+                playClickSound();
+                setShowGlobe((v) => !v);
+              }}
+              title={showGlobe ? 'Ocultar Globo Terrestre' : 'Exibir Globo da Terra 3D'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-mono tracking-wider transition cursor-pointer shadow-lg ${
+                showGlobe
+                  ? isNightVision
+                    ? 'bg-red-950/80 border-red-500/60 text-red-300 shadow-red-950/50'
+                    : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-300 shadow-indigo-950/50'
+                  : 'bg-black/60 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-700'
+              }`}
+            >
+              <Globe className={`w-3.5 h-3.5 ${isNightVision ? 'text-red-400' : 'text-indigo-400'}`} />
+              <span className="hidden sm:inline">GLOBO 3D</span>
+            </button>
+          </div>
         </div>
+
+        {/* Floating Draggable Widgets (Rosa dos Ventos & Globo Terrestre) */}
+        {showGlobe && (
+          <EarthGlobeWidget
+            observer={location}
+            orientation={orientation}
+            isNightVision={isNightVision}
+          />
+        )}
+
+        {showCompass && (
+          <CompassRose
+            orientation={orientation}
+            isNightVision={isNightVision}
+            onAlignNorth={() => {
+              const delta = -orientation.heading;
+              updateManualOrientation(delta, 0);
+            }}
+          />
+        )}
       </main>
 
       {/* 3. Modal Dialogs */}

@@ -8,6 +8,8 @@ import {
   Layers,
   Search,
   Filter,
+  Route,
+  Orbit,
 } from 'lucide-react';
 import {
   CelestialObject,
@@ -15,7 +17,13 @@ import {
   DeviceOrientationState,
   ObserverCoords,
 } from '../types/astronomy';
-import { CONSTELLATIONS_CATALOG, getMoonPhase } from '../utils/astronomyEngine';
+import {
+  CONSTELLATIONS_CATALOG,
+  getMoonPhase,
+  calculateDiurnalMotionTrack,
+  calculateEclipticLine,
+  calculateCelestialEquator,
+} from '../utils/astronomyEngine';
 import { playClickSound } from '../utils/audioEffects';
 
 interface CelestialMapProps {
@@ -33,6 +41,7 @@ interface CelestialMapProps {
 export const CelestialMap: React.FC<CelestialMapProps> = ({
   objects,
   orientation,
+  observer,
   selectedObject,
   onSelectObject,
   onManualLookaround,
@@ -48,7 +57,8 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   const [showConstellationLines, setShowConstellationLines] = useState<boolean>(true);
   const [showConstellationNames, setShowConstellationNames] = useState<boolean>(true);
   const [showStarNames, setShowStarNames] = useState<boolean>(true);
-  const [showPlanetOrbits, setShowPlanetOrbits] = useState<boolean>(true);
+  const [showMotionTrails, setShowMotionTrails] = useState<boolean>(true); // Linhas de movimentação
+  const [showEcliptic, setShowEcliptic] = useState<boolean>(true); // Linha da Eclíptica & Equador
   const [showGrid, setShowGrid] = useState<boolean>(true);
   const [filterType, setFilterType] = useState<string>('all'); // all, stars, planets, dso
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -119,7 +129,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       const x = centerX + (azDiff / (fovDeg / 2)) * (width / 2);
       const y = centerY - (altDiff / (fovDeg / 2)) * (height / 2);
 
-      const inView = x >= -50 && x <= width + 50 && y >= -50 && y <= height + 50;
+      const inView = x >= -60 && x <= width + 60 && y >= -60 && y <= height + 60;
       return { x, y, inView };
     };
 
@@ -201,7 +211,172 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       }
     });
 
-    // 4. Draw Constellation Lines and Names
+    // 4. Draw Ecliptic Line and Celestial Equator
+    if (showEcliptic) {
+      const now = new Date();
+
+      // A. Ecliptic Plane (Caminho da Eclíptica / Sol)
+      const eclipticPoints = calculateEclipticLine(observer.latitude, observer.longitude, now);
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.45)' : 'rgba(251, 191, 36, 0.45)';
+      ctx.setLineDash([6, 4]);
+
+      ctx.beginPath();
+      let started = false;
+      eclipticPoints.forEach((p) => {
+        const pt = project(p.azimuth, p.altitude);
+        if (!started) {
+          ctx.moveTo(pt.x, pt.y);
+          started = true;
+        } else {
+          // Avoid wraparound line artifacts when crossing view boundary
+          const azDiff = Math.abs(((p.azimuth - viewHeading + 540) % 360) - 180);
+          if (azDiff <= fovDeg * 1.2) {
+            ctx.lineTo(pt.x, pt.y);
+          } else {
+            ctx.moveTo(pt.x, pt.y);
+          }
+        }
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Ecliptic Label along arc
+      const sampleEcliptic = eclipticPoints.find((p) => {
+        const azDiff = Math.abs(((p.azimuth - viewHeading + 540) % 360) - 180);
+        return azDiff < fovDeg * 0.4 && p.altitude > 10;
+      });
+      if (sampleEcliptic) {
+        const tagPt = project(sampleEcliptic.azimuth, sampleEcliptic.altitude);
+        if (tagPt.inView) {
+          ctx.fillStyle = isNightVision ? '#f87171' : '#fcd34d';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('LINHA DA ECLÍPTICA', tagPt.x, tagPt.y - 6);
+        }
+      }
+
+      // B. Celestial Equator (Equador Celeste)
+      const equatorPoints = calculateCelestialEquator(observer.latitude, observer.longitude, now);
+      ctx.lineWidth = 1.0;
+      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.3)' : 'rgba(56, 189, 248, 0.35)';
+      ctx.setLineDash([3, 4]);
+
+      ctx.beginPath();
+      let eqStarted = false;
+      equatorPoints.forEach((p) => {
+        const pt = project(p.azimuth, p.altitude);
+        if (!eqStarted) {
+          ctx.moveTo(pt.x, pt.y);
+          eqStarted = true;
+        } else {
+          const azDiff = Math.abs(((p.azimuth - viewHeading + 540) % 360) - 180);
+          if (azDiff <= fovDeg * 1.2) {
+            ctx.lineTo(pt.x, pt.y);
+          } else {
+            ctx.moveTo(pt.x, pt.y);
+          }
+        }
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 5. Draw Diurnal Motion Paths ("Linhas de Movimentação")
+    if (showMotionTrails) {
+      const now = new Date();
+      const objectsToTrack: CelestialObject[] = [];
+
+      // Always track selected object if present
+      if (selectedObject) {
+        objectsToTrack.push(selectedObject);
+      }
+
+      // Track Sun, Moon, and major bright planets
+      objects.forEach((obj) => {
+        if (
+          (obj.type === 'sun' ||
+            obj.type === 'moon' ||
+            (obj.type === 'planet' && (obj.id === 'venus' || obj.id === 'jupiter' || obj.id === 'mars' || obj.id === 'saturn'))) &&
+          !objectsToTrack.some((o) => o.id === obj.id)
+        ) {
+          objectsToTrack.push(obj);
+        }
+      });
+
+      objectsToTrack.forEach((obj) => {
+        const isSelected = selectedObject?.id === obj.id;
+        const track = calculateDiurnalMotionTrack(obj, observer.latitude, observer.longitude, now);
+
+        // 1. Draw Past & Future Continuous Trajectory
+        ctx.save();
+        ctx.lineWidth = isSelected ? 2.0 : 1.2;
+        ctx.strokeStyle = isNightVision
+          ? isSelected
+            ? 'rgba(239, 68, 68, 0.8)'
+            : 'rgba(239, 68, 68, 0.35)'
+          : isSelected
+          ? 'rgba(34, 211, 238, 0.85)'
+          : obj.type === 'sun'
+          ? 'rgba(251, 191, 36, 0.5)'
+          : obj.type === 'moon'
+          ? 'rgba(226, 232, 240, 0.45)'
+          : 'rgba(129, 140, 248, 0.4)';
+
+        ctx.setLineDash(isSelected ? [5, 3] : [3, 4]);
+
+        ctx.beginPath();
+        let pathStarted = false;
+        track.points.forEach((p) => {
+          const pt = project(p.azimuth, p.altitude);
+          if (!pathStarted) {
+            ctx.moveTo(pt.x, pt.y);
+            pathStarted = true;
+          } else {
+            const azDiff = Math.abs(((p.azimuth - viewHeading + 540) % 360) - 180);
+            if (azDiff <= fovDeg * 1.2) {
+              ctx.lineTo(pt.x, pt.y);
+            } else {
+              ctx.moveTo(pt.x, pt.y);
+            }
+          }
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 2. Draw Directional Motion Arrows and Time Tick Markers
+        track.points.forEach((p) => {
+          if (p.timeLabel && p.altitude > -5) {
+            const pt = project(p.azimuth, p.altitude);
+            if (pt.inView) {
+              // Motion arrow indicator for future hours
+              if (p.timeOffsetHours > 0 && p.timeOffsetHours % 2 === 0) {
+                ctx.fillStyle = isNightVision ? '#ef4444' : (isSelected ? '#22d3ee' : '#94a3b8');
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.font = '8px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(p.timeLabel, pt.x, pt.y - 5);
+              }
+
+              // Culmination or current tag
+              if (p.timeOffsetHours === 0 && isSelected) {
+                ctx.fillStyle = isNightVision ? '#ef4444' : '#22d3ee';
+                ctx.font = 'bold 8px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(`TRAJETÓRIA: ${obj.name.toUpperCase()}`, pt.x, pt.y + 16);
+              }
+            }
+          }
+        });
+
+        ctx.restore();
+      });
+    }
+
+    // 6. Draw Constellation Lines and Names
     if (showConstellationLines) {
       ctx.lineWidth = 1.2;
       ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.35)' : 'rgba(99, 102, 241, 0.4)';
@@ -232,7 +407,6 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
 
         // Constellation Name
         if (showConstellationNames) {
-          // Average position of constellation stars
           const visibleStars = constellation.stars
             .map((s) => objects.find((o) => o.id === s.id))
             .filter((s): s is CelestialObject => s != null && s.azimuth != null && s.altitude != null);
@@ -253,7 +427,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       });
     }
 
-    // 5. Draw Celestial Objects (Stars, Planets, Moon, Sun, Deep Sky)
+    // 7. Draw Celestial Objects (Stars, Planets, Moon, Sun, Deep Sky)
     const newProjected: { obj: CelestialObject; x: number; y: number; radius: number }[] = [];
 
     // Filter objects if user searched or filtered
@@ -384,7 +558,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
 
     projectedObjectsRef.current = newProjected;
 
-    // 6. Camera Field-Of-View (FOV) Reticle Frame
+    // 8. Camera Field-Of-View (FOV) Reticle Frame
     // Demonstrates what the top camera viewport is looking at
     ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 211, 238, 0.4)';
     ctx.lineWidth = 1.5;
@@ -410,11 +584,15 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   }, [
     objects,
     orientation,
+    observer.latitude,
+    observer.longitude,
     selectedObject,
     zoomLevel,
     showConstellationLines,
     showConstellationNames,
     showStarNames,
+    showMotionTrails,
+    showEcliptic,
     showGrid,
     filterType,
     searchQuery,
@@ -448,6 +626,21 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   useEffect(() => {
     renderSky();
   }, [renderSky]);
+
+  // Non-passive wheel and gesture listener on canvas for fluid zoom
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+      setZoomLevel((prev) => Math.max(0.5, Math.min(3.5, prev * zoomFactor)));
+    };
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', handleWheel);
+  }, []);
 
   // Pointer Click / Touch Hit-Testing
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -489,7 +682,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     const dy = e.clientY - lastMousePosRef.current.y;
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
-    // Invert delta for natural dragging: dragging right moves view left (or right)
+    // Invert delta for natural dragging
     const sensitivity = 0.25 / zoomLevel;
     onManualLookaround(-dx * sensitivity, dy * sensitivity);
   };
@@ -556,7 +749,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         className="w-full h-full cursor-grab active:cursor-grabbing block"
       />
 
-      {/* Floating Toolbar & Status */}
+      {/* Floating Toolbar & Status (Top-Left) */}
       <div className="absolute top-2 left-2 flex items-center gap-1.5 z-10">
         {/* Sync with Sensor or Manual Pan Pill */}
         {isManualControl ? (
@@ -576,7 +769,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         )}
       </div>
 
-      {/* Zoom Controls */}
+      {/* Zoom Controls (Bottom-Right) */}
       <div className="absolute bottom-3 right-2 flex flex-col gap-1.5 z-10">
         <button
           id="btn-zoom-in"
@@ -596,20 +789,55 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         </button>
       </div>
 
-      {/* Filter Quick Pills at Top-Right */}
-      <div className="absolute top-2 right-2 flex items-center gap-1 z-10">
+      {/* Filter & Motion Path Quick Pills at Top-Right */}
+      <div className="absolute top-2 right-2 flex items-center gap-1 z-10 flex-wrap justify-end">
+        <button
+          id="btn-toggle-motion-trails"
+          onClick={() => {
+            playClickSound();
+            setShowMotionTrails((v) => !v);
+          }}
+          title="Alternar Linhas de Movimentação e Órbitas"
+          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
+            showMotionTrails
+              ? 'bg-cyan-950/80 border-cyan-500/50 text-cyan-300 shadow-sm shadow-cyan-950/50'
+              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Route className="w-3 h-3 text-cyan-400" />
+          <span>TRAJETÓRIAS</span>
+        </button>
+
+        <button
+          id="btn-toggle-ecliptic"
+          onClick={() => {
+            playClickSound();
+            setShowEcliptic((v) => !v);
+          }}
+          title="Alternar Linha da Eclíptica e Equador Celeste"
+          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
+            showEcliptic
+              ? 'bg-amber-950/80 border-amber-500/50 text-amber-300 shadow-sm shadow-amber-950/50'
+              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Orbit className="w-3 h-3 text-amber-400" />
+          <span>ECLÍPTICA</span>
+        </button>
+
         <button
           id="btn-toggle-constellations"
           onClick={() => setShowConstellationLines((v) => !v)}
           title="Alternar Linhas de Constelações"
           className={`px-2.5 py-1.5 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
             showConstellationLines
-              ? 'bg-cyan-950/80 border-cyan-500/50 text-cyan-300'
+              ? 'bg-indigo-950/80 border-indigo-500/50 text-indigo-300'
               : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200'
           }`}
         >
           CONSTELAÇÕES
         </button>
+
         <button
           id="btn-toggle-grid"
           onClick={() => setShowGrid((v) => !v)}

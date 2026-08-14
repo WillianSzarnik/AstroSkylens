@@ -1389,3 +1389,144 @@ export function findTargetInReticle(
     nearby: nearby.slice(0, 5),
   };
 }
+
+/**
+ * Computes 24h diurnal motion track (apparent movement across the sky) for a celestial object.
+ * Returns points sampled across -12h to +12h around the current moment.
+ */
+export function calculateDiurnalMotionTrack(
+  obj: CelestialObject,
+  lat: number,
+  lon: number,
+  baseDate: Date = new Date()
+): {
+  objectId: string;
+  objectName: string;
+  color: string;
+  points: { timeOffsetHours: number; timeLabel: string; altitude: number; azimuth: number; isVisible: boolean }[];
+  maxAltitude: number;
+} {
+  const points: { timeOffsetHours: number; timeLabel: string; altitude: number; azimuth: number; isVisible: boolean }[] = [];
+  let maxAltitude = -90;
+
+  // Sample every 30 minutes (-12h to +12h = 49 points)
+  for (let offsetHours = -12; offsetHours <= 12; offsetHours += 0.5) {
+    const sampleDate = new Date(baseDate.getTime() + offsetHours * 3600000);
+    const coords = equatorialToHorizontal(obj.ra, obj.dec, lat, lon, sampleDate);
+
+    let timeLabel = '';
+    if (offsetHours === 0) {
+      timeLabel = 'AGORA';
+    } else if (Number.isInteger(offsetHours)) {
+      const sign = offsetHours > 0 ? '+' : '';
+      timeLabel = `${sign}${offsetHours}h`;
+    }
+
+    if (coords.altitude > maxAltitude) {
+      maxAltitude = coords.altitude;
+    }
+
+    points.push({
+      timeOffsetHours: offsetHours,
+      timeLabel,
+      altitude: coords.altitude,
+      azimuth: coords.azimuth,
+      isVisible: coords.altitude > 0,
+    });
+  }
+
+  return {
+    objectId: obj.id,
+    objectName: obj.name,
+    color: obj.color || '#38bdf8',
+    points,
+    maxAltitude,
+  };
+}
+
+/**
+ * Computes Ecliptic line points projected to the local sky (Altitude & Azimuth)
+ */
+export function calculateEclipticLine(
+  lat: number,
+  lon: number,
+  date: Date = new Date()
+): { azimuth: number; altitude: number; lonDeg: number; isVisible: boolean }[] {
+  const obliquity = 23.439 * DEG2RAD;
+  const points: { azimuth: number; altitude: number; lonDeg: number; isVisible: boolean }[] = [];
+
+  // Sample ecliptic longitude every 5 degrees (0 to 360)
+  for (let lambdaDeg = 0; lambdaDeg <= 360; lambdaDeg += 5) {
+    const lambdaRad = lambdaDeg * DEG2RAD;
+    const raRad = Math.atan2(Math.cos(obliquity) * Math.sin(lambdaRad), Math.cos(lambdaRad));
+    const decRad = Math.asin(Math.sin(obliquity) * Math.sin(lambdaRad));
+
+    const raHours = ((raRad * RAD2DEG) / 15 + 24) % 24;
+    const decDeg = decRad * RAD2DEG;
+
+    const coords = equatorialToHorizontal(raHours, decDeg, lat, lon, date);
+    points.push({
+      azimuth: coords.azimuth,
+      altitude: coords.altitude,
+      lonDeg: lambdaDeg,
+      isVisible: coords.altitude > -10,
+    });
+  }
+
+  return points;
+}
+
+/**
+ * Computes Celestial Equator points (Dec = 0°, RA = 0h to 24h)
+ */
+export function calculateCelestialEquator(
+  lat: number,
+  lon: number,
+  date: Date = new Date()
+): { azimuth: number; altitude: number; raHours: number }[] {
+  const points: { azimuth: number; altitude: number; raHours: number }[] = [];
+
+  for (let raHours = 0; raHours <= 24; raHours += 0.5) {
+    const coords = equatorialToHorizontal(raHours, 0, lat, lon, date);
+    points.push({
+      azimuth: coords.azimuth,
+      altitude: coords.altitude,
+      raHours,
+    });
+  }
+
+  return points;
+}
+
+/**
+ * Calculates Subsolar Point on Earth (latitude & longitude where Sun is at zenith)
+ */
+export function calculateSubsolarPoint(date: Date = new Date()): { latitude: number; longitude: number } {
+  const jd = getJulianDate(date);
+  const d = jd - 2451545.0;
+
+  const sunMeanLon = (280.46 + 0.9856474 * d) % 360;
+  const sunMeanAnomaly = (357.528 + 0.9856003 * d) * DEG2RAD;
+  const sunEclipticLon =
+    (sunMeanLon +
+      1.915 * Math.sin(sunMeanAnomaly) +
+      0.02 * Math.sin(2 * sunMeanAnomaly)) *
+    DEG2RAD;
+  const obliquity = 23.439 * DEG2RAD;
+
+  // Subsolar Latitude = Sun Declination
+  const decRad = Math.asin(Math.sin(obliquity) * Math.sin(sunEclipticLon));
+  const subsolarLat = decRad * RAD2DEG;
+
+  // Subsolar Longitude = Greenwich Sidereal Time related to Sun RA
+  const sunRaRad = Math.atan2(Math.cos(obliquity) * Math.sin(sunEclipticLon), Math.cos(sunEclipticLon));
+  const sunRaDeg = (sunRaRad * RAD2DEG + 360) % 360;
+
+  const gmstHours = getGMST(date);
+  const gmstDeg = gmstHours * 15;
+
+  let subsolarLon = sunRaDeg - gmstDeg;
+  subsolarLon = ((subsolarLon + 180) % 360 + 360) % 360 - 180; // -180 to 180
+
+  return { latitude: subsolarLat, longitude: subsolarLon };
+}
