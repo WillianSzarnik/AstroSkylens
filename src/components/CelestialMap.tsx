@@ -4,13 +4,10 @@ import {
   ZoomOut,
   RotateCcw,
   Compass,
-  Sparkles,
   Route,
   Orbit,
   Crosshair,
   Map as MapIcon,
-  Eye,
-  Layers,
   Info,
 } from 'lucide-react';
 import {
@@ -24,7 +21,6 @@ import {
   getMoonPhase,
   calculateDiurnalMotionTrack,
   calculateEclipticLine,
-  calculateCelestialEquator,
 } from '../utils/astronomyEngine';
 import { playClickSound } from '../utils/audioEffects';
 
@@ -57,6 +53,8 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   // Map view settings
   const [projectionMode, setProjectionMode] = useState<'planisphere' | 'panoramic'>('planisphere'); // 'planisphere' (Carta Celeste) default
   const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.5x to 3.5x
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 }); // Manual pan in Planisphere mode
+
   const [showConstellationLines, setShowConstellationLines] = useState<boolean>(true);
   const [showConstellationNames, setShowConstellationNames] = useState<boolean>(true);
   const [showStarNames, setShowStarNames] = useState<boolean>(true);
@@ -71,41 +69,53 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   // Touch pinch zoom
   const touchDistanceRef = useRef<number | null>(null);
 
-  // Screen objects for hit-testing
+  // Screen objects for hit-testing (stored in logical CSS coordinates)
   const projectedObjectsRef = useRef<{ obj: CelestialObject; x: number; y: number; radius: number }[]>([]);
 
-  // Render Canvas Sky
+  // Render Canvas Sky strictly using Logical CSS dimensions
   const renderSky = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
-    const centerX = width / 2;
-    const centerY = height / 2;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = container.getBoundingClientRect();
+    const logicalWidth = rect.width;
+    const logicalHeight = rect.height;
 
-    // Clear background
-    ctx.clearRect(0, 0, width, height);
+    if (logicalWidth === 0 || logicalHeight === 0) return;
 
-    // Deep space gradient
+    // Reset transform & scale for crisp Retina display
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const width = logicalWidth;
+    const height = logicalHeight;
+
+    // Center point calculated from logical width/height + manual pan offset
+    const centerX = width / 2 + (projectionMode === 'planisphere' ? panOffset.x : 0);
+    const centerY = height / 2 + (projectionMode === 'planisphere' ? panOffset.y : 0);
+
+    // Deep space background gradient
     const bgGrad = ctx.createRadialGradient(
       centerX,
       centerY,
-      50,
+      40,
       centerX,
       centerY,
       Math.max(width, height)
     );
 
     if (isNightVision) {
-      bgGrad.addColorStop(0, '#1a0505');
+      bgGrad.addColorStop(0, '#1c0505');
       bgGrad.addColorStop(0.7, '#0d0202');
       bgGrad.addColorStop(1, '#050000');
     } else {
-      bgGrad.addColorStop(0, '#080812');
-      bgGrad.addColorStop(0.6, '#040408');
+      bgGrad.addColorStop(0, '#090a16');
+      bgGrad.addColorStop(0.6, '#04050a');
       bgGrad.addColorStop(1, '#020204');
     }
     ctx.fillStyle = bgGrad;
@@ -123,35 +133,34 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       // -------------------------------------------------------------
       // Observer is at the center (Zenith = 90° Alt).
       // Radius reaches 0° Alt at the Horizon circle.
-      const domeRadius = (Math.min(width, height) * 0.44) * zoomLevel;
+      const domeRadius = Math.min(width, height) * 0.42 * zoomLevel;
 
       project = (azDeg: number, altDeg: number) => {
-        // Clamp altitude to above-horizon with small margin
         const zenithAngleDeg = Math.max(0, 90 - altDeg); // 0 at zenith, 90 at horizon, >90 below
         const r = (zenithAngleDeg / 90) * domeRadius;
 
-        // Azimuth angle with current view heading as north/top offset
-        const azRad = ((azDeg - (isManualControl ? 0 : 0) - 90) * Math.PI) / 180;
+        // North (Az 0°) at top, East (Az 90°) at left (astronomical looking up)
+        const azRad = ((azDeg - 90) * Math.PI) / 180;
         const x = centerX + r * Math.cos(azRad);
         const y = centerY + r * Math.sin(azRad);
 
-        const inView = x >= -40 && x <= width + 40 && y >= -40 && y <= height + 40;
+        const inView = x >= -50 && x <= width + 50 && y >= -50 && y <= height + 50;
         return { x, y, inView };
       };
 
-      // 1. Draw Planisphere Outer Brass/Obsidian Horizon Ring & Grid
+      // 1. Draw Planisphere Outer Horizon Ring & Altitude Grid
       if (showGrid) {
         // Concentric altitude circles (30°, 60°)
         [30, 60].forEach((alt) => {
           const r = ((90 - alt) / 90) * domeRadius;
           ctx.beginPath();
           ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
-          ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.12)';
+          ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.18)' : 'rgba(56, 189, 248, 0.14)';
           ctx.lineWidth = 1;
           ctx.stroke();
 
           // Altitude Label
-          ctx.fillStyle = isNightVision ? 'rgba(239, 68, 68, 0.5)' : 'rgba(148, 163, 184, 0.5)';
+          ctx.fillStyle = isNightVision ? 'rgba(239, 68, 68, 0.6)' : 'rgba(148, 163, 184, 0.6)';
           ctx.font = '9px monospace';
           ctx.textAlign = 'center';
           ctx.fillText(`ALT ${alt}°`, centerX, centerY - r + 11);
@@ -163,23 +172,23 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
           ctx.beginPath();
           ctx.moveTo(centerX, centerY);
           ctx.lineTo(centerX + domeRadius * Math.cos(rad), centerY + domeRadius * Math.sin(rad));
-          ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.12)' : 'rgba(56, 189, 248, 0.1)';
+          ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.14)' : 'rgba(56, 189, 248, 0.1)';
           ctx.lineWidth = 1;
           ctx.stroke();
         }
       }
 
-      // 2. Horizon Circle (Alt = 0°)
+      // 2. Horizon Outer Circle (Alt = 0°)
       ctx.beginPath();
       ctx.arc(centerX, centerY, domeRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.7)' : 'rgba(34, 211, 238, 0.6)';
+      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.8)' : 'rgba(34, 211, 238, 0.75)';
       ctx.lineWidth = 2.5;
       ctx.stroke();
 
-      // Outer Glow of the Horizon Dome
+      // Outer Soft Glow Ring
       ctx.beginPath();
       ctx.arc(centerX, centerY, domeRadius + 3, 0, Math.PI * 2);
-      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 211, 238, 0.18)';
+      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.25)' : 'rgba(34, 211, 238, 0.2)';
       ctx.lineWidth = 6;
       ctx.stroke();
 
@@ -209,7 +218,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       });
 
       // Zenith Center Marker
-      ctx.fillStyle = isNightVision ? 'rgba(239, 68, 68, 0.6)' : 'rgba(34, 211, 238, 0.6)';
+      ctx.fillStyle = isNightVision ? 'rgba(239, 68, 68, 0.7)' : 'rgba(34, 211, 238, 0.7)';
       ctx.beginPath();
       ctx.arc(centerX, centerY, 3, 0, Math.PI * 2);
       ctx.fill();
@@ -226,22 +235,23 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       ctx.save();
       const beamGrad = ctx.createLinearGradient(centerX, centerY, sightTargetX, sightTargetY);
       beamGrad.addColorStop(0, 'rgba(34, 211, 238, 0.05)');
-      beamGrad.addColorStop(1, isNightVision ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 211, 238, 0.4)');
+      beamGrad.addColorStop(1, isNightVision ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 211, 238, 0.45)');
       ctx.fillStyle = beamGrad;
       ctx.beginPath();
       ctx.moveTo(centerX, centerY);
-      ctx.arc(centerX, centerY, pitchOffset, headingRad - 0.25, headingRad + 0.25);
+      ctx.arc(centerX, centerY, pitchOffset, headingRad - 0.22, headingRad + 0.22);
       ctx.closePath();
       ctx.fill();
 
       // Reticle at Phone's exact pointing location
       ctx.strokeStyle = isNightVision ? '#ef4444' : '#22d3ee';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.8;
       ctx.beginPath();
-      ctx.arc(sightTargetX, sightTargetY, 12, 0, Math.PI * 2);
+      ctx.arc(sightTargetX, sightTargetY, 11, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(sightTargetX, sightTargetY, 2, 0, Math.PI * 2);
+      ctx.arc(sightTargetX, sightTargetY, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = isNightVision ? '#ef4444' : '#22d3ee';
       ctx.fill();
       ctx.restore();
     } else {
@@ -339,7 +349,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         ctx.lineWidth = isSelected ? 2.0 : 1.2;
         ctx.strokeStyle = isNightVision
           ? isSelected
-            ? 'rgba(239, 68, 68, 0.8)'
+            ? 'rgba(239, 68, 68, 0.85)'
             : 'rgba(239, 68, 68, 0.35)'
           : isSelected
           ? 'rgba(34, 211, 238, 0.85)'
@@ -431,8 +441,8 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       if (!pt.inView) return;
 
       const isSelected = selectedObject?.id === obj.id;
-      let radius = Math.max(2.0, Math.min(9, 6 - obj.mag * 0.8));
-      if (obj.type === 'sun' || obj.type === 'moon') radius = 13;
+      let radius = Math.max(2.5, Math.min(8.5, 5.5 - obj.mag * 0.8));
+      if (obj.type === 'sun' || obj.type === 'moon') radius = 12;
       if (obj.type === 'planet') radius = Math.max(5.0, radius * 1.35);
 
       newProjected.push({ obj, x: pt.x, y: pt.y, radius: Math.max(radius, 14) });
@@ -518,6 +528,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     selectedObject,
     projectionMode,
     zoomLevel,
+    panOffset,
     showConstellationLines,
     showConstellationNames,
     showStarNames,
@@ -525,7 +536,6 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     showEcliptic,
     showGrid,
     isNightVision,
-    isManualControl,
   ]);
 
   // Handle Resize & Render loop with ResizeObserver
@@ -537,11 +547,13 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     const updateCanvasSize = () => {
       const rect = container.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.max(10, rect.width * dpr);
-      canvas.height = Math.max(10, rect.height * dpr);
+      const w = Math.max(10, Math.floor(rect.width));
+      const h = Math.max(10, Math.floor(rect.height));
 
-      const ctx = canvas.getContext('2d');
-      if (ctx) ctx.scale(dpr, dpr);
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
 
       renderSky();
     };
@@ -593,13 +605,13 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     };
   }, []);
 
-  // Pointer Click / Touch Hit-Testing
+  // Pointer Click / Touch Hit-Testing in Logical Pixels
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const clickX = (e.clientX - rect.left) * (window.devicePixelRatio || 1);
-    const clickY = (e.clientY - rect.top) * (window.devicePixelRatio || 1);
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
 
     let clicked: CelestialObject | null = null;
     let minDist = 28;
@@ -620,20 +632,26 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     }
   };
 
-  // Drag Pan Handlers with Smooth Sensitivity
+  // Drag Pan Handlers with Smooth Pan Offset in Planisphere Mode
   const handleMouseDown = (e: React.MouseEvent) => {
     isDraggingRef.current = true;
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDraggingRef.current || !onManualLookaround) return;
+    if (!isDraggingRef.current) return;
     const dx = e.clientX - lastMousePosRef.current.x;
     const dy = e.clientY - lastMousePosRef.current.y;
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
-    const sensitivity = Math.min(0.24, 0.16 / Math.sqrt(zoomLevel));
-    onManualLookaround(-dx * sensitivity, dy * sensitivity);
+    if (projectionMode === 'planisphere') {
+      // In Carta Celeste mode: Translate pan offset
+      setPanOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+    } else if (onManualLookaround) {
+      // In Panoramic mode: Rotate lookaround
+      const sensitivity = Math.min(0.24, 0.16 / Math.sqrt(zoomLevel));
+      onManualLookaround(-dx * sensitivity, dy * sensitivity);
+    }
   };
 
   const handleMouseUp = () => {
@@ -654,12 +672,17 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 1 && isDraggingRef.current && onManualLookaround) {
+    if (e.touches.length === 1 && isDraggingRef.current) {
       const dx = e.touches[0].clientX - lastMousePosRef.current.x;
       const dy = e.touches[0].clientY - lastMousePosRef.current.y;
       lastMousePosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      const sensitivity = Math.min(0.24, 0.18 / Math.sqrt(zoomLevel));
-      onManualLookaround(-dx * sensitivity, dy * sensitivity);
+
+      if (projectionMode === 'planisphere') {
+        setPanOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+      } else if (onManualLookaround) {
+        const sensitivity = Math.min(0.24, 0.18 / Math.sqrt(zoomLevel));
+        onManualLookaround(-dx * sensitivity, dy * sensitivity);
+      }
     } else if (e.touches.length === 2 && touchDistanceRef.current != null) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -676,6 +699,14 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   const handleTouchEnd = () => {
     isDraggingRef.current = false;
     touchDistanceRef.current = null;
+  };
+
+  // Recenter Action
+  const handleRecenter = () => {
+    playClickSound();
+    setPanOffset({ x: 0, y: 0 });
+    setZoomLevel(1.0);
+    onResetToSensors();
   };
 
   return (
@@ -720,18 +751,15 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         </button>
 
         {/* Sync with Sensor or Manual Pan Pill */}
-        {isManualControl ? (
+        {isManualControl || panOffset.x !== 0 || panOffset.y !== 0 ? (
           <button
             id="btn-re-sync-gyro"
-            onClick={() => {
-              playClickSound();
-              onResetToSensors();
-            }}
-            title="Sincronizar novamente com o Giroscópio"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-950/90 backdrop-blur-md border border-amber-500/60 text-amber-300 text-[10px] font-mono tracking-wider shadow-lg hover:bg-amber-900 transition cursor-pointer active:scale-95"
+            onClick={handleRecenter}
+            title="Recentralizar Mapa e Sincronizar com o Giroscópio"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-950/90 backdrop-blur-md border border-amber-500/60 text-amber-300 text-[10px] font-mono tracking-wider shadow-lg hover:bg-amber-900 transition cursor-pointer active:scale-95 animate-pulse"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">RE-SINCRONIZAR</span>
+            <span>CENTRALIZAR</span>
           </button>
         ) : (
           <div className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-black/75 backdrop-blur-md border border-zinc-800 text-zinc-300 text-[10px] font-mono tracking-wider shadow-lg">
@@ -742,14 +770,12 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
 
         <button
           id="btn-recenter-horizon"
-          onClick={() => {
-            playClickSound();
-            if (onResetToSensors) onResetToSensors();
-          }}
-          title="Recentralizar Mapa"
-          className="p-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-zinc-800 text-zinc-400 hover:text-cyan-300 hover:border-zinc-700 shadow-md transition cursor-pointer"
+          onClick={handleRecenter}
+          title="Centralizar Mapa Celeste no Meio da Tela"
+          className="flex items-center gap-1 p-1.5 px-2 rounded-xl bg-black/75 backdrop-blur-md border border-cyan-500/50 text-cyan-300 hover:bg-cyan-950 hover:border-cyan-400 shadow-md transition cursor-pointer active:scale-95"
         >
-          <Crosshair className="w-3.5 h-3.5" />
+          <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="text-[10px] font-mono font-bold hidden xs:inline">CENTRALIZAR</span>
         </button>
       </div>
 
@@ -771,6 +797,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
           onClick={() => {
             playClickSound();
             setZoomLevel(1.0);
+            setPanOffset({ x: 0, y: 0 });
           }}
           title="Zoom Padrão (1.0x)"
           className="px-1.5 py-1 rounded-xl bg-zinc-900/90 backdrop-blur-md border border-zinc-800 text-[9px] font-mono text-zinc-400 hover:text-cyan-300 shadow-lg active:scale-95 transition cursor-pointer text-center"
