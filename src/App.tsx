@@ -242,7 +242,7 @@ export default function App() {
   return (
     <div
       id="astrovision-app-root"
-      className="w-screen h-screen overflow-hidden flex flex-col bg-[#050505] text-zinc-100 font-sans select-none"
+      className="w-full h-full h-[100dvh] min-h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col bg-[#050505] text-zinc-100 font-sans select-none"
     >
       {/* 1. Header Navigation & Status Bar */}
       <HeaderNav
@@ -338,8 +338,8 @@ export default function App() {
         )}
 
         {/* Floating Controls & Navigation HUDs */}
-        {/* Bottom-Left Controls Dock */}
-        <div className="absolute bottom-4 left-3 z-30 flex flex-col gap-2 pointer-events-auto">
+        {/* Bottom-Left Controls Dock - elevated safely above iPhone home indicator */}
+        <div className="absolute bottom-3.5 left-2.5 z-30 flex flex-col gap-2 pointer-events-auto">
           {showVirtualJoystick && (
             <div className="animate-fade-in">
               <VirtualJoystick
@@ -359,14 +359,14 @@ export default function App() {
                 setShowVirtualJoystick((v) => !v);
               }}
               title={showVirtualJoystick ? 'Ocultar D-Pad Virtual' : 'Mostrar D-Pad Virtual (Controle Manual)'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-mono tracking-wider transition cursor-pointer shadow-lg ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-md border text-[11px] font-mono tracking-wider transition cursor-pointer shadow-lg active:scale-95 ${
                 showVirtualJoystick || isManualControl
-                  ? 'bg-cyan-950/80 border-cyan-500/60 text-cyan-300 shadow-cyan-950/50'
-                  : 'bg-black/60 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-700'
+                  ? 'bg-cyan-950/90 border-cyan-500/70 text-cyan-300 shadow-cyan-950/50'
+                  : 'bg-black/75 border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700'
               }`}
             >
               <Gamepad2 className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="hidden sm:inline">D-PAD</span>
+              <span>D-PAD</span>
             </button>
 
             <button
@@ -376,16 +376,16 @@ export default function App() {
                 setShowCompass((v) => !v);
               }}
               title={showCompass ? 'Ocultar Bússola' : 'Exibir Rosa dos Ventos'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-mono tracking-wider transition cursor-pointer shadow-lg ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-md border text-[11px] font-mono tracking-wider transition cursor-pointer shadow-lg active:scale-95 ${
                 showCompass
                   ? isNightVision
-                    ? 'bg-red-950/80 border-red-500/60 text-red-300 shadow-red-950/50'
-                    : 'bg-cyan-950/80 border-cyan-500/60 text-cyan-300 shadow-cyan-950/50'
-                  : 'bg-black/60 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-700'
+                    ? 'bg-red-950/90 border-red-500/70 text-red-300 shadow-red-950/50'
+                    : 'bg-cyan-950/90 border-cyan-500/70 text-cyan-300 shadow-cyan-950/50'
+                  : 'bg-black/75 border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700'
               }`}
             >
               <Compass className={`w-3.5 h-3.5 ${isNightVision ? 'text-red-400' : 'text-cyan-400'}`} />
-              <span className="hidden sm:inline">BÚSSOLA</span>
+              <span>BÚSSOLA</span>
             </button>
 
             <button
@@ -395,16 +395,16 @@ export default function App() {
                 setShowGlobe((v) => !v);
               }}
               title={showGlobe ? 'Ocultar Globo Terrestre' : 'Exibir Globo da Terra 3D'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-mono tracking-wider transition cursor-pointer shadow-lg ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-md border text-[11px] font-mono tracking-wider transition cursor-pointer shadow-lg active:scale-95 ${
                 showGlobe
                   ? isNightVision
-                    ? 'bg-red-950/80 border-red-500/60 text-red-300 shadow-red-950/50'
-                    : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-300 shadow-indigo-950/50'
-                  : 'bg-black/60 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-700'
+                    ? 'bg-red-950/90 border-red-500/70 text-red-300 shadow-red-950/50'
+                    : 'bg-indigo-950/90 border-indigo-500/70 text-indigo-300 shadow-indigo-950/50'
+                  : 'bg-black/75 border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700'
               }`}
             >
               <Globe className={`w-3.5 h-3.5 ${isNightVision ? 'text-red-400' : 'text-indigo-400'}`} />
-              <span className="hidden sm:inline">GLOBO 3D</span>
+              <span>GLOBO 3D</span>
             </button>
           </div>
         </div>

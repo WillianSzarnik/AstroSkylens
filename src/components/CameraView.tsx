@@ -329,7 +329,41 @@ export const CameraView: React.FC<CameraViewProps> = ({
         </div>
       )}
 
-      {/* 3. Top-Right Quick Action Bar */}
+      {/* 3. Top-Left Quick SkyLens Circular Trigger */}
+      <div className="absolute top-2 left-2 flex items-center gap-1.5 z-20">
+        <button
+          id="btn-identify-sky-lens-circular"
+          onClick={() => {
+            playScanSound();
+            onIdentifyWithLens();
+          }}
+          disabled={isScanning}
+          title="SkyLens: Identificar Objeto Celeste com IA"
+          className={`relative group flex items-center gap-1.5 p-2 px-2.5 rounded-full font-mono text-xs text-white shadow-xl transition-all duration-200 cursor-pointer overflow-hidden backdrop-blur-md active:scale-95 ${
+            isScanning
+              ? 'bg-zinc-800/90 border border-zinc-700 cursor-not-allowed opacity-80'
+              : isNightVision
+              ? 'bg-red-950/90 hover:bg-red-900 border border-red-500/70 text-red-300 shadow-[0_0_12px_rgba(239,68,68,0.4)]'
+              : 'bg-cyan-950/90 hover:bg-cyan-900/90 border border-cyan-400/60 text-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.35)]'
+          }`}
+        >
+          <div className="relative flex items-center justify-center">
+            <Sparkles
+              className={`w-4 h-4 text-cyan-300 ${
+                isScanning ? 'animate-spin text-amber-400' : 'group-hover:scale-110'
+              }`}
+            />
+            {!isScanning && (
+              <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-cyan-400 rounded-full animate-ping" />
+            )}
+          </div>
+          <span className="text-[10px] font-bold tracking-wider uppercase pr-0.5">
+            {isScanning ? 'LENS...' : 'SKYLENS'}
+          </span>
+        </button>
+      </div>
+
+      {/* 4. Top-Right Quick Action Bar */}
       <div className="absolute top-2 right-2 flex items-center gap-1.5 z-20">
         <button
           id="btn-night-vision"
@@ -375,33 +409,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
           className="p-2 rounded-xl bg-zinc-900/90 backdrop-blur-md border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 transition cursor-pointer"
         >
           <HelpCircle className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* 4. Bottom Main Sky Lens Identify Trigger */}
-      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2">
-        <button
-          id="btn-identify-sky-lens"
-          onClick={() => {
-            playScanSound();
-            onIdentifyWithLens();
-          }}
-          disabled={isScanning}
-          className={`group relative flex items-center gap-2.5 px-5 py-2.5 rounded-full font-mono text-xs text-white shadow-xl transition-all duration-300 cursor-pointer overflow-hidden ${
-            isScanning
-              ? 'bg-zinc-800 border border-zinc-700 cursor-not-allowed opacity-80'
-              : 'bg-cyan-600 hover:bg-cyan-500 border border-cyan-400/50 shadow-lg shadow-cyan-950/60 hover:shadow-[0_0_20px_#06b6d4]'
-          }`}
-        >
-          <Sparkles
-            className={`w-4 h-4 text-white ${
-              isScanning ? 'animate-spin' : 'group-hover:scale-110'
-            }`}
-          />
-          <span className="tracking-widest uppercase font-bold">
-            {isScanning ? 'IDENTIFICANDO...' : 'SKY LENS (IDENTIFICAR)'}
-          </span>
-          <Zap className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
         </button>
       </div>
     </div>

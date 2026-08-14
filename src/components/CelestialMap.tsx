@@ -5,15 +5,13 @@ import {
   RotateCcw,
   Compass,
   Sparkles,
-  Layers,
-  Search,
-  Filter,
   Route,
   Orbit,
   Crosshair,
-  Maximize,
-  Minimize,
-  Sliders,
+  Map as MapIcon,
+  Eye,
+  Layers,
+  Info,
 } from 'lucide-react';
 import {
   CelestialObject,
@@ -57,15 +55,14 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Map view settings
-  const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.5x to 3.0x
+  const [projectionMode, setProjectionMode] = useState<'planisphere' | 'panoramic'>('planisphere'); // 'planisphere' (Carta Celeste) default
+  const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.5x to 3.5x
   const [showConstellationLines, setShowConstellationLines] = useState<boolean>(true);
   const [showConstellationNames, setShowConstellationNames] = useState<boolean>(true);
   const [showStarNames, setShowStarNames] = useState<boolean>(true);
-  const [showMotionTrails, setShowMotionTrails] = useState<boolean>(true); // Linhas de movimentação
-  const [showEcliptic, setShowEcliptic] = useState<boolean>(true); // Linha da Eclíptica & Equador
+  const [showMotionTrails, setShowMotionTrails] = useState<boolean>(true);
+  const [showEcliptic, setShowEcliptic] = useState<boolean>(true);
   const [showGrid, setShowGrid] = useState<boolean>(true);
-  const [filterType, setFilterType] = useState<string>('all'); // all, stars, planets, dso
-  const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Drag tracking for manual pan
   const isDraggingRef = useRef<boolean>(false);
@@ -89,11 +86,6 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     const centerX = width / 2;
     const centerY = height / 2;
 
-    // Field of View in degrees (Base FOV ~ 70 deg, scaled by zoom)
-    const fovDeg = 75 / zoomLevel;
-    const fovRad = (fovDeg * Math.PI) / 180;
-    const fovRadiusPx = Math.min(width, height) * 0.48;
-
     // Clear background
     ctx.clearRect(0, 0, width, height);
 
@@ -112,174 +104,209 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       bgGrad.addColorStop(0.7, '#0d0202');
       bgGrad.addColorStop(1, '#050000');
     } else {
-      bgGrad.addColorStop(0, '#0a0a14'); // obsidian deep space
-      bgGrad.addColorStop(0.5, '#050508'); // pitch dark navy
-      bgGrad.addColorStop(1, '#020202'); // pure obsidian
+      bgGrad.addColorStop(0, '#080812');
+      bgGrad.addColorStop(0.6, '#040408');
+      bgGrad.addColorStop(1, '#020204');
     }
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, width, height);
 
-    // Center of view
     const viewHeading = orientation.heading; // 0-360 deg
     const viewPitch = orientation.pitch; // -90 to +90 deg
 
-    // Function to project celestial Alt/Az to Screen X/Y (Stereographic/Gnomonic style projection)
-    const project = (azDeg: number, altDeg: number): { x: number; y: number; inView: boolean } => {
-      // Calculate angular distance and direction relative to center of view
-      const azDiff = ((azDeg - viewHeading + 540) % 360) - 180; // -180 to 180
-      const altDiff = altDeg - viewPitch; // -180 to 180
+    // Projection calculation functions
+    let project: (azDeg: number, altDeg: number) => { x: number; y: number; inView: boolean };
 
-      // Approximate tangential projection on canvas
-      const x = centerX + (azDiff / (fovDeg / 2)) * (width / 2);
-      const y = centerY - (altDiff / (fovDeg / 2)) * (height / 2);
+    if (projectionMode === 'planisphere') {
+      // -------------------------------------------------------------
+      // CARTA CELESTE (PLANISFÉRIO DOME PROJECTION)
+      // -------------------------------------------------------------
+      // Observer is at the center (Zenith = 90° Alt).
+      // Radius reaches 0° Alt at the Horizon circle.
+      const domeRadius = (Math.min(width, height) * 0.44) * zoomLevel;
 
-      const inView = x >= -60 && x <= width + 60 && y >= -60 && y <= height + 60;
-      return { x, y, inView };
-    };
+      project = (azDeg: number, altDeg: number) => {
+        // Clamp altitude to above-horizon with small margin
+        const zenithAngleDeg = Math.max(0, 90 - altDeg); // 0 at zenith, 90 at horizon, >90 below
+        const r = (zenithAngleDeg / 90) * domeRadius;
 
-    // 1. Draw Azimuth / Altitude Grid Lines
-    if (showGrid) {
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.12)';
+        // Azimuth angle with current view heading as north/top offset
+        const azRad = ((azDeg - (isManualControl ? 0 : 0) - 90) * Math.PI) / 180;
+        const x = centerX + r * Math.cos(azRad);
+        const y = centerY + r * Math.sin(azRad);
 
-      // Altitude concentric rings / horizontal parallels
-      for (let alt = -60; alt <= 80; alt += 20) {
-        ctx.beginPath();
-        for (let az = viewHeading - fovDeg; az <= viewHeading + fovDeg; az += 5) {
-          const pt = project(az, alt);
-          if (az === viewHeading - fovDeg) ctx.moveTo(pt.x, pt.y);
-          else ctx.lineTo(pt.x, pt.y);
-        }
-        ctx.stroke();
+        const inView = x >= -40 && x <= width + 40 && y >= -40 && y <= height + 40;
+        return { x, y, inView };
+      };
 
-        // Altitude Label
-        const labelPt = project(viewHeading - fovDeg * 0.4, alt);
-        if (labelPt.inView) {
-          ctx.fillStyle = isNightVision ? 'rgba(239, 68, 68, 0.4)' : 'rgba(148, 163, 184, 0.4)';
-          ctx.font = '10px monospace';
-          ctx.fillText(`${alt}°`, labelPt.x, labelPt.y - 3);
+      // 1. Draw Planisphere Outer Brass/Obsidian Horizon Ring & Grid
+      if (showGrid) {
+        // Concentric altitude circles (30°, 60°)
+        [30, 60].forEach((alt) => {
+          const r = ((90 - alt) / 90) * domeRadius;
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
+          ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.12)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Altitude Label
+          ctx.fillStyle = isNightVision ? 'rgba(239, 68, 68, 0.5)' : 'rgba(148, 163, 184, 0.5)';
+          ctx.font = '9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(`ALT ${alt}°`, centerX, centerY - r + 11);
+        });
+
+        // Azimuth Spokes (N, NE, E, SE, S, SW, W, NW)
+        for (let az = 0; az < 360; az += 45) {
+          const rad = ((az - 90) * Math.PI) / 180;
+          ctx.beginPath();
+          ctx.moveTo(centerX, centerY);
+          ctx.lineTo(centerX + domeRadius * Math.cos(rad), centerY + domeRadius * Math.sin(rad));
+          ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.12)' : 'rgba(56, 189, 248, 0.1)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
         }
       }
 
-      // Azimuth vertical meridians
-      for (let az = 0; az < 360; az += 30) {
-        ctx.beginPath();
-        for (let alt = -80; alt <= 80; alt += 5) {
-          const pt = project(az, alt);
-          if (alt === -80) ctx.moveTo(pt.x, pt.y);
-          else ctx.lineTo(pt.x, pt.y);
-        }
-        ctx.stroke();
-      }
-    }
+      // 2. Horizon Circle (Alt = 0°)
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, domeRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.7)' : 'rgba(34, 211, 238, 0.6)';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
 
-    // 2. Draw Horizon Line (Altitude = 0°)
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.6)' : 'rgba(34, 211, 238, 0.5)';
-    ctx.beginPath();
-    for (let az = viewHeading - fovDeg; az <= viewHeading + fovDeg; az += 2) {
-      const pt = project(az, 0);
-      if (az === viewHeading - fovDeg) ctx.moveTo(pt.x, pt.y);
-      else ctx.lineTo(pt.x, pt.y);
-    }
-    ctx.stroke();
+      // Outer Glow of the Horizon Dome
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, domeRadius + 3, 0, Math.PI * 2);
+      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 211, 238, 0.18)';
+      ctx.lineWidth = 6;
+      ctx.stroke();
 
-    // 3. Draw Cardinal Directions along the Horizon
-    const cardinals = [
-      { name: 'NORTE (N)', az: 0 },
-      { name: 'NORDESTE (NE)', az: 45 },
-      { name: 'LESTE (L)', az: 90 },
-      { name: 'SUDESTE (SE)', az: 135 },
-      { name: 'SUL (S)', az: 180 },
-      { name: 'SUDOESTE (SO)', az: 225 },
-      { name: 'OESTE (O)', az: 270 },
-      { name: 'NOROESTE (NO)', az: 315 },
-    ];
+      // Cardinal Points along Horizon Rim
+      const cardinals = [
+        { name: 'N', az: 0 },
+        { name: 'NE', az: 45 },
+        { name: 'L', az: 90 },
+        { name: 'SE', az: 135 },
+        { name: 'S', az: 180 },
+        { name: 'SO', az: 225 },
+        { name: 'O', az: 270 },
+        { name: 'NO', az: 315 },
+      ];
 
-    cardinals.forEach((c) => {
-      const pt = project(c.az, 0);
-      if (pt.inView) {
-        // Tag box
-        ctx.fillStyle = isNightVision ? 'rgba(153, 27, 27, 0.8)' : 'rgba(15, 23, 42, 0.85)';
-        ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.8)' : 'rgba(34, 211, 238, 0.8)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(pt.x - 30, pt.y - 12, 60, 20, 4);
-        ctx.fill();
-        ctx.stroke();
+      cardinals.forEach((c) => {
+        const rad = ((c.az - 90) * Math.PI) / 180;
+        const tagRadius = domeRadius + 14;
+        const tagX = centerX + tagRadius * Math.cos(rad);
+        const tagY = centerY + tagRadius * Math.sin(rad);
 
-        ctx.fillStyle = isNightVision ? '#fca5a5' : '#67e8f9';
-        ctx.font = 'bold 9px monospace';
+        ctx.fillStyle = isNightVision ? '#ef4444' : '#22d3ee';
+        ctx.font = 'bold 10px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(c.name, pt.x, pt.y + 2);
-      }
-    });
+        ctx.textBaseline = 'middle';
+        ctx.fillText(c.name, tagX, tagY);
+      });
 
-    // 4. Draw Ecliptic Line and Celestial Equator
+      // Zenith Center Marker
+      ctx.fillStyle = isNightVision ? 'rgba(239, 68, 68, 0.6)' : 'rgba(34, 211, 238, 0.6)';
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = 'bold 8px monospace';
+      ctx.fillText('ZÊNITE (90°)', centerX, centerY + 12);
+
+      // 3. Aiming Cone / Gyroscope Device Sight Line
+      const headingRad = ((viewHeading - 90) * Math.PI) / 180;
+      const pitchOffset = Math.max(0, (90 - viewPitch) / 90) * domeRadius;
+      const sightTargetX = centerX + pitchOffset * Math.cos(headingRad);
+      const sightTargetY = centerY + pitchOffset * Math.sin(headingRad);
+
+      // Beam from zenith towards current aim direction
+      ctx.save();
+      const beamGrad = ctx.createLinearGradient(centerX, centerY, sightTargetX, sightTargetY);
+      beamGrad.addColorStop(0, 'rgba(34, 211, 238, 0.05)');
+      beamGrad.addColorStop(1, isNightVision ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 211, 238, 0.4)');
+      ctx.fillStyle = beamGrad;
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.arc(centerX, centerY, pitchOffset, headingRad - 0.25, headingRad + 0.25);
+      ctx.closePath();
+      ctx.fill();
+
+      // Reticle at Phone's exact pointing location
+      ctx.strokeStyle = isNightVision ? '#ef4444' : '#22d3ee';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(sightTargetX, sightTargetY, 12, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(sightTargetX, sightTargetY, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else {
+      // -------------------------------------------------------------
+      // VISÃO PANORÂMICA (TANGENTIAL VIEW PROJECTION)
+      // -------------------------------------------------------------
+      const fovDeg = 75 / zoomLevel;
+
+      project = (azDeg: number, altDeg: number) => {
+        const azDiff = ((azDeg - viewHeading + 540) % 360) - 180;
+        const altDiff = altDeg - viewPitch;
+
+        const x = centerX + (azDiff / (fovDeg / 2)) * (width / 2);
+        const y = centerY - (altDiff / (fovDeg / 2)) * (height / 2);
+
+        const inView = x >= -60 && x <= width + 60 && y >= -60 && y <= height + 60;
+        return { x, y, inView };
+      };
+
+      // Grid in Panoramic view
+      if (showGrid) {
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.12)';
+
+        for (let alt = -60; alt <= 80; alt += 20) {
+          ctx.beginPath();
+          for (let az = viewHeading - fovDeg; az <= viewHeading + fovDeg; az += 5) {
+            const pt = project(az, alt);
+            if (az === viewHeading - fovDeg) ctx.moveTo(pt.x, pt.y);
+            else ctx.lineTo(pt.x, pt.y);
+          }
+          ctx.stroke();
+        }
+      }
+
+      // Horizon line
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.6)' : 'rgba(34, 211, 238, 0.5)';
+      ctx.beginPath();
+      for (let az = viewHeading - fovDeg; az <= viewHeading + fovDeg; az += 2) {
+        const pt = project(az, 0);
+        if (az === viewHeading - fovDeg) ctx.moveTo(pt.x, pt.y);
+        else ctx.lineTo(pt.x, pt.y);
+      }
+      ctx.stroke();
+    }
+
+    // 4. Draw Ecliptic Line
     if (showEcliptic) {
       const now = new Date();
-
-      // A. Ecliptic Plane (Caminho da Eclíptica / Sol)
       const eclipticPoints = calculateEclipticLine(observer.latitude, observer.longitude, now);
       ctx.lineWidth = 1.4;
       ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.45)' : 'rgba(251, 191, 36, 0.45)';
-      ctx.setLineDash([6, 4]);
+      ctx.setLineDash([5, 4]);
 
       ctx.beginPath();
       let started = false;
       eclipticPoints.forEach((p) => {
+        if (projectionMode === 'planisphere' && p.altitude < -10) return;
         const pt = project(p.azimuth, p.altitude);
         if (!started) {
           ctx.moveTo(pt.x, pt.y);
           started = true;
         } else {
-          // Avoid wraparound line artifacts when crossing view boundary
-          const azDiff = Math.abs(((p.azimuth - viewHeading + 540) % 360) - 180);
-          if (azDiff <= fovDeg * 1.2) {
-            ctx.lineTo(pt.x, pt.y);
-          } else {
-            ctx.moveTo(pt.x, pt.y);
-          }
-        }
-      });
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Ecliptic Label along arc
-      const sampleEcliptic = eclipticPoints.find((p) => {
-        const azDiff = Math.abs(((p.azimuth - viewHeading + 540) % 360) - 180);
-        return azDiff < fovDeg * 0.4 && p.altitude > 10;
-      });
-      if (sampleEcliptic) {
-        const tagPt = project(sampleEcliptic.azimuth, sampleEcliptic.altitude);
-        if (tagPt.inView) {
-          ctx.fillStyle = isNightVision ? '#f87171' : '#fcd34d';
-          ctx.font = 'bold 9px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('LINHA DA ECLÍPTICA', tagPt.x, tagPt.y - 6);
-        }
-      }
-
-      // B. Celestial Equator (Equador Celeste)
-      const equatorPoints = calculateCelestialEquator(observer.latitude, observer.longitude, now);
-      ctx.lineWidth = 1.0;
-      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.3)' : 'rgba(56, 189, 248, 0.35)';
-      ctx.setLineDash([3, 4]);
-
-      ctx.beginPath();
-      let eqStarted = false;
-      equatorPoints.forEach((p) => {
-        const pt = project(p.azimuth, p.altitude);
-        if (!eqStarted) {
-          ctx.moveTo(pt.x, pt.y);
-          eqStarted = true;
-        } else {
-          const azDiff = Math.abs(((p.azimuth - viewHeading + 540) % 360) - 180);
-          if (azDiff <= fovDeg * 1.2) {
-            ctx.lineTo(pt.x, pt.y);
-          } else {
-            ctx.moveTo(pt.x, pt.y);
-          }
+          ctx.lineTo(pt.x, pt.y);
         }
       });
       ctx.stroke();
@@ -291,17 +318,13 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       const now = new Date();
       const objectsToTrack: CelestialObject[] = [];
 
-      // Always track selected object if present
-      if (selectedObject) {
-        objectsToTrack.push(selectedObject);
-      }
-
-      // Track Sun, Moon, and major bright planets
+      if (selectedObject) objectsToTrack.push(selectedObject);
       objects.forEach((obj) => {
         if (
           (obj.type === 'sun' ||
             obj.type === 'moon' ||
-            (obj.type === 'planet' && (obj.id === 'venus' || obj.id === 'jupiter' || obj.id === 'mars' || obj.id === 'saturn'))) &&
+            (obj.type === 'planet' &&
+              (obj.id === 'venus' || obj.id === 'jupiter' || obj.id === 'mars' || obj.id === 'saturn'))) &&
           !objectsToTrack.some((o) => o.id === obj.id)
         ) {
           objectsToTrack.push(obj);
@@ -312,7 +335,6 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         const isSelected = selectedObject?.id === obj.id;
         const track = calculateDiurnalMotionTrack(obj, observer.latitude, observer.longitude, now);
 
-        // 1. Draw Past & Future Continuous Trajectory
         ctx.save();
         ctx.lineWidth = isSelected ? 2.0 : 1.2;
         ctx.strokeStyle = isNightVision
@@ -332,71 +354,37 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         ctx.beginPath();
         let pathStarted = false;
         track.points.forEach((p) => {
+          if (projectionMode === 'planisphere' && p.altitude < -5) return;
           const pt = project(p.azimuth, p.altitude);
           if (!pathStarted) {
             ctx.moveTo(pt.x, pt.y);
             pathStarted = true;
           } else {
-            const azDiff = Math.abs(((p.azimuth - viewHeading + 540) % 360) - 180);
-            if (azDiff <= fovDeg * 1.2) {
-              ctx.lineTo(pt.x, pt.y);
-            } else {
-              ctx.moveTo(pt.x, pt.y);
-            }
+            ctx.lineTo(pt.x, pt.y);
           }
         });
         ctx.stroke();
         ctx.setLineDash([]);
-
-        // 2. Draw Directional Motion Arrows and Time Tick Markers
-        track.points.forEach((p) => {
-          if (p.timeLabel && p.altitude > -5) {
-            const pt = project(p.azimuth, p.altitude);
-            if (pt.inView) {
-              // Motion arrow indicator for future hours
-              if (p.timeOffsetHours > 0 && p.timeOffsetHours % 2 === 0) {
-                ctx.fillStyle = isNightVision ? '#ef4444' : (isSelected ? '#22d3ee' : '#94a3b8');
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.font = '8px monospace';
-                ctx.textAlign = 'center';
-                ctx.fillText(p.timeLabel, pt.x, pt.y - 5);
-              }
-
-              // Culmination or current tag
-              if (p.timeOffsetHours === 0 && isSelected) {
-                ctx.fillStyle = isNightVision ? '#ef4444' : '#22d3ee';
-                ctx.font = 'bold 8px monospace';
-                ctx.textAlign = 'center';
-                ctx.fillText(`TRAJETÓRIA: ${obj.name.toUpperCase()}`, pt.x, pt.y + 16);
-              }
-            }
-          }
-        });
-
         ctx.restore();
       });
     }
 
-    // 6. Draw Constellation Lines and Names
+    // 6. Draw Constellations
     if (showConstellationLines) {
       ctx.lineWidth = 1.2;
       ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.35)' : 'rgba(99, 102, 241, 0.4)';
 
       CONSTELLATIONS_CATALOG.forEach((constellation: ConstellationData) => {
-        // Draw connecting lines between stars
         constellation.lines.forEach(([idxA, idxB]) => {
           const starA = constellation.stars[idxA];
           const starB = constellation.stars[idxB];
           if (!starA || !starB) return;
 
-          // Find live coordinates from current objects list or recalculate
           const objA = objects.find((o) => o.id === starA.id) || starA;
           const objB = objects.find((o) => o.id === starB.id) || starB;
 
           if (objA.azimuth != null && objA.altitude != null && objB.azimuth != null && objB.altitude != null) {
+            if (projectionMode === 'planisphere' && (objA.altitude < -5 || objB.altitude < -5)) return;
             const ptA = project(objA.azimuth, objA.altitude);
             const ptB = project(objB.azimuth, objB.altitude);
 
@@ -409,7 +397,6 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
           }
         });
 
-        // Constellation Name
         if (showConstellationNames) {
           const visibleStars = constellation.stars
             .map((s) => objects.find((o) => o.id === s.id))
@@ -418,61 +405,41 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
           if (visibleStars.length > 0) {
             const avgAz = visibleStars.reduce((acc, s) => acc + (s.azimuth || 0), 0) / visibleStars.length;
             const avgAlt = visibleStars.reduce((acc, s) => acc + (s.altitude || 0), 0) / visibleStars.length;
+            if (projectionMode === 'planisphere' && avgAlt < -5) return;
             const centerPt = project(avgAz, avgAlt);
 
             if (centerPt.inView) {
               ctx.fillStyle = isNightVision ? 'rgba(252, 165, 165, 0.7)' : 'rgba(199, 210, 254, 0.75)';
-              ctx.font = 'bold 11px sans-serif';
+              ctx.font = 'bold 10px sans-serif';
               ctx.textAlign = 'center';
-              ctx.fillText(constellation.name.toUpperCase(), centerPt.x, centerPt.y - 12);
+              ctx.fillText(constellation.name.toUpperCase(), centerPt.x, centerPt.y - 10);
             }
           }
         }
       });
     }
 
-    // 7. Draw Celestial Objects (Stars, Planets, Moon, Sun, Deep Sky)
+    // 7. Plot All Celestial Objects (Planets, Moon, Sun, Stars)
     const newProjected: { obj: CelestialObject; x: number; y: number; radius: number }[] = [];
-
-    // Filter objects if user searched or filtered
-    let filteredObjects = objects;
-    if (filterType !== 'all') {
-      filteredObjects = objects.filter((o) => {
-        if (filterType === 'stars') return o.type === 'star';
-        if (filterType === 'planets') return o.type === 'planet' || o.type === 'moon' || o.type === 'sun';
-        if (filterType === 'dso') return o.type === 'galaxy' || o.type === 'nebula' || o.type === 'cluster' || o.type === 'satellite';
-        return true;
-      });
-    }
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      filteredObjects = filteredObjects.filter(
-        (o) => o.name.toLowerCase().includes(q) || o.constellation.toLowerCase().includes(q)
-      );
-    }
-
-    // Sort to draw brighter objects on top
-    const sorted = [...filteredObjects].sort((a, b) => b.mag - a.mag);
+    const sorted = [...objects].sort((a, b) => b.mag - a.mag);
 
     sorted.forEach((obj) => {
       if (obj.azimuth == null || obj.altitude == null) return;
+      if (projectionMode === 'planisphere' && obj.altitude < -6) return;
 
       const pt = project(obj.azimuth, obj.altitude);
       if (!pt.inView) return;
 
       const isSelected = selectedObject?.id === obj.id;
-
-      // Base radius by apparent magnitude (brighter = larger)
-      let radius = Math.max(1.8, Math.min(9, 6 - obj.mag * 0.8));
-      if (obj.type === 'sun' || obj.type === 'moon') radius = 14;
-      if (obj.type === 'planet') radius = Math.max(4.5, radius * 1.3);
+      let radius = Math.max(2.0, Math.min(9, 6 - obj.mag * 0.8));
+      if (obj.type === 'sun' || obj.type === 'moon') radius = 13;
+      if (obj.type === 'planet') radius = Math.max(5.0, radius * 1.35);
 
       newProjected.push({ obj, x: pt.x, y: pt.y, radius: Math.max(radius, 14) });
 
       ctx.save();
 
-      // Selected ring highlight
+      // Selected Object Glowing Ring
       if (isSelected) {
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, radius + 8, 0, Math.PI * 2);
@@ -483,7 +450,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         ctx.setLineDash([]);
       }
 
-      // Star Glow
+      // Planet / Star Optical Glow
       if (obj.mag < 1.5 || obj.type === 'planet' || obj.type === 'sun' || obj.type === 'moon') {
         const glowRadius = radius * (obj.type === 'sun' || obj.type === 'moon' ? 2.5 : 2.0);
         const glowGrad = ctx.createRadialGradient(pt.x, pt.y, radius * 0.5, pt.x, pt.y, glowRadius);
@@ -495,15 +462,14 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         ctx.fill();
       }
 
-      // Moon Real Phase Drawing
+      // Render Body Shape
       if (obj.type === 'moon') {
         const moonPhase = getMoonPhase();
-        ctx.fillStyle = '#1e293b'; // dark side
+        ctx.fillStyle = '#1e293b';
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
         ctx.fill();
 
-        // Bright crescent/side
         ctx.fillStyle = isNightVision ? '#fca5a5' : '#f8fafc';
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, radius, -Math.PI / 2, Math.PI / 2, moonPhase.illumination < 0.5);
@@ -519,32 +485,15 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
         ctx.fill();
-      } else if (obj.type === 'galaxy' || obj.type === 'nebula') {
-        // Deep Sky Object elliptical spiral
-        ctx.fillStyle = isNightVision ? 'rgba(239, 68, 68, 0.4)' : (obj.color || 'rgba(192, 132, 252, 0.4)');
-        ctx.beginPath();
-        ctx.ellipse(pt.x, pt.y, radius * 1.6, radius * 0.9, Math.PI / 4, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = isNightVision ? '#fca5a5' : (obj.color || '#c084fc');
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      } else if (obj.type === 'satellite') {
-        // Satellite cross marker
-        ctx.fillStyle = isNightVision ? '#ef4444' : '#34d399';
-        ctx.fillRect(pt.x - 3, pt.y - 3, 6, 6);
-        ctx.strokeStyle = isNightVision ? '#fca5a5' : '#a7f3d0';
-        ctx.strokeRect(pt.x - 5, pt.y - 5, 10, 10);
       } else {
-        // Standard Star / Planet solid body
         ctx.fillStyle = isNightVision ? '#fca5a5' : (obj.color || '#f8fafc');
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // Star & Planet Labels
-      if (showStarNames && (obj.mag <= 2.0 || obj.type === 'planet' || obj.type === 'moon' || isSelected)) {
+      // Labels for Planets, Moon, Sun and Bright Stars
+      if (showStarNames && (obj.mag <= 2.2 || obj.type === 'planet' || obj.type === 'moon' || isSelected)) {
         ctx.fillStyle = isNightVision ? '#fca5a5' : (isSelected ? '#22d3ee' : '#e2e8f0');
         ctx.font = isSelected ? 'bold 11px sans-serif' : '10px sans-serif';
         ctx.textAlign = 'left';
@@ -561,36 +510,13 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     });
 
     projectedObjectsRef.current = newProjected;
-
-    // 8. Camera Field-Of-View (FOV) Reticle Frame
-    // Demonstrates what the top camera viewport is looking at
-    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 211, 238, 0.4)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    const reticleW = width * 0.28;
-    const reticleH = height * 0.28;
-    ctx.strokeRect(centerX - reticleW / 2, centerY - reticleH / 2, reticleW, reticleH);
-
-    // Cross in center of map
-    ctx.strokeStyle = isNightVision ? '#ef4444' : '#22d3ee';
-    ctx.beginPath();
-    ctx.moveTo(centerX - 10, centerY);
-    ctx.lineTo(centerX + 10, centerY);
-    ctx.moveTo(centerX, centerY - 10);
-    ctx.lineTo(centerX, centerY + 10);
-    ctx.stroke();
-
-    // Field of view label
-    ctx.fillStyle = isNightVision ? '#fca5a5' : '#38bdf8';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('CAMPO DE VISÃO DA CÂMERA (AR)', centerX, centerY - reticleH / 2 - 6);
   }, [
     objects,
     orientation,
     observer.latitude,
     observer.longitude,
     selectedObject,
+    projectionMode,
     zoomLevel,
     showConstellationLines,
     showConstellationNames,
@@ -598,9 +524,8 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     showMotionTrails,
     showEcliptic,
     showGrid,
-    filterType,
-    searchQuery,
     isNightVision,
+    isManualControl,
   ]);
 
   // Handle Resize & Render loop with ResizeObserver
@@ -623,7 +548,6 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
 
     updateCanvasSize();
 
-    // Use ResizeObserver for instant split-screen resizing response
     const resizeObserver = new ResizeObserver(() => {
       updateCanvasSize();
     });
@@ -652,7 +576,6 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       setZoomLevel((prev) => Math.max(0.5, Math.min(3.5, prev * zoomFactor)));
     };
 
-    // Safari Gesture events prevention
     const handleGestureStart = (e: Event) => e.preventDefault();
     const handleGestureChange = (e: Event) => e.preventDefault();
     const handleGestureEnd = (e: Event) => e.preventDefault();
@@ -678,9 +601,8 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     const clickX = (e.clientX - rect.left) * (window.devicePixelRatio || 1);
     const clickY = (e.clientY - rect.top) * (window.devicePixelRatio || 1);
 
-    // Find clicked object
     let clicked: CelestialObject | null = null;
-    let minDist = 25;
+    let minDist = 28;
 
     for (const item of projectedObjectsRef.current) {
       const dx = item.x - clickX;
@@ -698,7 +620,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     }
   };
 
-  // Mouse / Touch Drag Pan Handlers with Smooth Natural Damping
+  // Drag Pan Handlers with Smooth Sensitivity
   const handleMouseDown = (e: React.MouseEvent) => {
     isDraggingRef.current = true;
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
@@ -710,8 +632,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     const dy = e.clientY - lastMousePosRef.current.y;
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
-    // Gentle natural sensitivity scale (capped so quick drags don't spin uncontrollably)
-    const sensitivity = Math.min(0.22, 0.16 / Math.sqrt(zoomLevel));
+    const sensitivity = Math.min(0.24, 0.16 / Math.sqrt(zoomLevel));
     onManualLookaround(-dx * sensitivity, dy * sensitivity);
   };
 
@@ -719,7 +640,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
     isDraggingRef.current = false;
   };
 
-  // Touch Handlers with Pinch Zoom & Strict Gesture Capture
+  // Touch Handlers with Pinch Zoom & Drag
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       isDraggingRef.current = true;
@@ -745,7 +666,6 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       const dist = Math.hypot(dx, dy);
       if (touchDistanceRef.current > 0) {
         const factor = dist / touchDistanceRef.current;
-        // Damp pinch factor for smooth controlled zooming
         const smoothFactor = 1 + (factor - 1) * 0.75;
         setZoomLevel((prev) => Math.max(0.5, Math.min(3.5, prev * smoothFactor)));
       }
@@ -781,8 +701,24 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         className="w-full h-full cursor-grab active:cursor-grabbing block touch-none"
       />
 
-      {/* Floating Toolbar & Status (Top-Left) */}
-      <div className="absolute top-2 left-2 flex items-center gap-1.5 z-10 flex-wrap">
+      {/* Floating Status & Projection Mode Bar (Top-Left) */}
+      <div className="absolute top-2 left-2 flex items-center gap-1.5 z-10 flex-wrap max-w-[70%]">
+        {/* Toggle Projection Mode: Carta Celeste vs Panorâmica */}
+        <button
+          id="btn-toggle-projection-mode"
+          onClick={() => {
+            playClickSound();
+            setProjectionMode((m) => (m === 'planisphere' ? 'panoramic' : 'planisphere'));
+          }}
+          title="Alternar entre Carta Celeste (Planisfério 360°) e Visão Panorâmica"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-950/85 backdrop-blur-md border border-cyan-500/60 text-cyan-300 text-[10px] font-mono tracking-wider shadow-lg hover:bg-cyan-900 transition cursor-pointer active:scale-95"
+        >
+          <MapIcon className="w-3.5 h-3.5" />
+          <span className="font-bold uppercase">
+            {projectionMode === 'planisphere' ? 'CARTA CELESTE' : 'PANORÂMICA'}
+          </span>
+        </button>
+
         {/* Sync with Sensor or Manual Pan Pill */}
         {isManualControl ? (
           <button
@@ -791,35 +727,34 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
               playClickSound();
               onResetToSensors();
             }}
-            title="Clique para sincronizar novamente com os sensores do dispositivo (Câmera AR)"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-950/90 backdrop-blur-md border border-amber-500/60 text-amber-300 text-[10px] font-mono tracking-wider shadow-lg hover:bg-amber-900 transition cursor-pointer active:scale-95"
+            title="Sincronizar novamente com o Giroscópio"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-950/90 backdrop-blur-md border border-amber-500/60 text-amber-300 text-[10px] font-mono tracking-wider shadow-lg hover:bg-amber-900 transition cursor-pointer active:scale-95"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>RE-SINCRONIZAR GIRO</span>
+            <span className="hidden sm:inline">RE-SINCRONIZAR</span>
           </button>
         ) : (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/75 backdrop-blur-md border border-zinc-800 text-zinc-300 text-[10px] font-mono tracking-wider shadow-lg">
+          <div className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-black/75 backdrop-blur-md border border-zinc-800 text-zinc-300 text-[10px] font-mono tracking-wider shadow-lg">
             <Compass className="w-3.5 h-3.5 text-cyan-400" />
-            <span>SINCRONIZADO C/ AR</span>
+            <span>GIRO ATIVO</span>
           </div>
         )}
 
-        {/* Center / Reset to Horizon or Zenith button */}
         <button
           id="btn-recenter-horizon"
           onClick={() => {
             playClickSound();
             if (onResetToSensors) onResetToSensors();
           }}
-          title="Recentralizar Mapa no Horizonte e Giroscópio"
+          title="Recentralizar Mapa"
           className="p-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-zinc-800 text-zinc-400 hover:text-cyan-300 hover:border-zinc-700 shadow-md transition cursor-pointer"
         >
           <Crosshair className="w-3.5 h-3.5" />
         </button>
       </div>
 
-      {/* Zoom Controls (Bottom-Right) */}
-      <div className="absolute bottom-3 right-2 flex flex-col gap-1.5 z-10">
+      {/* Zoom Controls (Bottom-Right - Elevated safely above iPhone bottom bar) */}
+      <div className="absolute bottom-4 right-2.5 flex flex-col gap-1.5 z-10">
         <button
           id="btn-zoom-in"
           onClick={() => {
@@ -855,7 +790,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
         </button>
       </div>
 
-      {/* Filter & Motion Path Quick Pills at Top-Right */}
+      {/* Layer Quick Toggles at Top-Right */}
       <div className="absolute top-2 right-2 flex items-center gap-1 z-10 flex-wrap justify-end">
         <button
           id="btn-toggle-motion-trails"
@@ -864,14 +799,14 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
             setShowMotionTrails((v) => !v);
           }}
           title="Alternar Linhas de Movimentação e Órbitas"
-          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
+          className={`flex items-center gap-1 px-2 py-1 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
             showMotionTrails
-              ? 'bg-cyan-950/80 border-cyan-500/50 text-cyan-300 shadow-sm shadow-cyan-950/50'
-              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+              ? 'bg-cyan-950/80 border-cyan-500/50 text-cyan-300 shadow-sm'
+              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400'
           }`}
         >
           <Route className="w-3 h-3 text-cyan-400" />
-          <span>TRAJETÓRIAS</span>
+          <span className="hidden sm:inline">TRAJETÓRIAS</span>
         </button>
 
         <button
@@ -880,43 +815,60 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
             playClickSound();
             setShowEcliptic((v) => !v);
           }}
-          title="Alternar Linha da Eclíptica e Equador Celeste"
-          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
+          title="Alternar Linha da Eclíptica"
+          className={`flex items-center gap-1 px-2 py-1 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
             showEcliptic
-              ? 'bg-amber-950/80 border-amber-500/50 text-amber-300 shadow-sm shadow-amber-950/50'
-              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+              ? 'bg-amber-950/80 border-amber-500/50 text-amber-300 shadow-sm'
+              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400'
           }`}
         >
           <Orbit className="w-3 h-3 text-amber-400" />
-          <span>ECLÍPTICA</span>
+          <span className="hidden sm:inline">ECLÍPTICA</span>
         </button>
 
         <button
           id="btn-toggle-constellations"
           onClick={() => setShowConstellationLines((v) => !v)}
           title="Alternar Linhas de Constelações"
-          className={`px-2.5 py-1.5 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
+          className={`px-2 py-1 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
             showConstellationLines
               ? 'bg-indigo-950/80 border-indigo-500/50 text-indigo-300'
-              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400'
           }`}
         >
-          CONSTELAÇÕES
-        </button>
-
-        <button
-          id="btn-toggle-grid"
-          onClick={() => setShowGrid((v) => !v)}
-          title="Alternar Grade de Coordenadas"
-          className={`px-2.5 py-1.5 rounded-xl backdrop-blur-md border text-[10px] font-mono tracking-wider transition cursor-pointer ${
-            showGrid
-              ? 'bg-cyan-950/80 border-cyan-500/50 text-cyan-300'
-              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          GRADE
+          CONST
         </button>
       </div>
+
+      {/* Selected Object Info Card at Bottom of Map */}
+      {selectedObject && (
+        <div className="absolute bottom-4 left-3 z-10 pointer-events-auto max-w-[65%] sm:max-w-md">
+          <div className="flex items-center gap-2.5 p-2 px-3 rounded-2xl bg-zinc-950/90 backdrop-blur-md border border-cyan-500/60 text-left shadow-2xl">
+            <div
+              className="w-3 h-3 rounded-full shrink-0 animate-pulse"
+              style={{ backgroundColor: selectedObject.color || '#38bdf8' }}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold text-cyan-300 truncate flex items-center gap-1.5">
+                <span>{selectedObject.name}</span>
+                <span className="text-[8px] font-mono px-1 py-0.2 bg-cyan-950 border border-cyan-800 text-cyan-400 rounded uppercase">
+                  {selectedObject.type}
+                </span>
+              </div>
+              <div className="text-[10px] text-zinc-400 font-mono truncate">
+                Az {Math.round(selectedObject.azimuth || 0)}° • Alt {Math.round(selectedObject.altitude || 0)}° • Mag {selectedObject.mag}
+              </div>
+            </div>
+            <button
+              onClick={() => onSelectObject(selectedObject)}
+              className="p-1 rounded-lg bg-cyan-950 border border-cyan-800 text-cyan-300 hover:bg-cyan-900 transition"
+              title="Mais Informações"
+            >
+              <Info className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
