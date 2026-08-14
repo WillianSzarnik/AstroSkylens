@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Globe, MapPin, Sun, Moon, Maximize2, Minimize2, RotateCcw, Move } from 'lucide-react';
+import { Globe, MapPin, Sun, Maximize2, Minimize2, RotateCcw, Move } from 'lucide-react';
 import { DeviceOrientationState, ObserverCoords } from '../types/astronomy';
 import { calculateSubsolarPoint, getLST } from '../utils/astronomyEngine';
 import { playClickSound } from '../utils/audioEffects';
@@ -12,90 +12,93 @@ interface EarthGlobeWidgetProps {
   className?: string;
 }
 
-// Simplified continent polygons in [lat, lon] coordinates
-const CONTINENTS_GEO: { name: string; paths: [number, number][][] }[] = [
+// Vector polygons of continents [lat, lon]
+const CONTINENTS_DATA: { name: string; rings: [number, number][][] }[] = [
   // South America
   {
-    name: 'South America',
-    paths: [
+    name: 'América do Sul',
+    rings: [
       [
-        [12, -72], [10, -62], [5, -52], [-5, -35], [-12, -38], [-23, -42],
-        [-34, -53], [-45, -65], [-55, -68], [-52, -75], [-40, -73], [-20, -70],
-        [-5, -81], [5, -77], [10, -75], [12, -72]
-      ]
-    ]
+        [12, -72], [11, -63], [7, -58], [4, -51], [-1, -48], [-4, -36],
+        [-10, -36], [-15, -39], [-23, -42], [-30, -50], [-38, -57], [-46, -66],
+        [-54, -68], [-55, -73], [-50, -75], [-42, -74], [-30, -71], [-18, -70],
+        [-10, -78], [-4, -81], [2, -79], [8, -77], [12, -72],
+      ],
+    ],
   },
-  // North America
+  // North America & Central America
   {
-    name: 'North America',
-    paths: [
+    name: 'América do Norte',
+    rings: [
       [
-        [70, -160], [72, -130], [70, -85], [55, -55], [45, -65], [30, -80],
-        [25, -80], [20, -90], [15, -90], [8, -78], [15, -95], [20, -105],
-        [32, -117], [48, -125], [60, -145], [65, -168], [70, -160]
+        [71, -156], [70, -130], [68, -90], [58, -62], [48, -53], [44, -64],
+        [35, -75], [26, -80], [29, -89], [25, -97], [20, -97], [16, -92],
+        [9, -78], [15, -88], [21, -106], [32, -117], [40, -124], [49, -125],
+        [58, -136], [60, -148], [65, -168], [71, -156],
       ],
       // Greenland
       [
-        [82, -40], [75, -20], [60, -45], [70, -55], [82, -40]
-      ]
-    ]
+        [83, -30], [77, -18], [68, -26], [60, -44], [67, -54], [78, -68], [83, -30],
+      ],
+    ],
   },
   // Africa
   {
-    name: 'Africa',
-    paths: [
+    name: 'África',
+    rings: [
       [
-        [36, -5], [37, 10], [32, 32], [22, 37], [12, 51], [5, 48],
-        [-10, 40], [-25, 33], [-34, 18], [-33, 26], [-20, 12], [-5, 9],
-        [5, 2], [5, -5], [15, -17], [28, -13], [36, -5]
+        [37, 10], [32, 32], [28, 34], [15, 42], [12, 51], [2, 45],
+        [-5, 39], [-15, 40], [-26, 33], [-34, 18], [-33, 27], [-22, 14],
+        [-8, 13], [4, 9], [6, 2], [5, -4], [15, -17], [26, -15],
+        [35, -6], [37, 10],
       ],
       // Madagascar
       [
-        [-12, 49], [-25, 47], [-25, 43], [-15, 45], [-12, 49]
-      ]
-    ]
+        [-12, 49], [-25, 47], [-25, 43], [-14, 47], [-12, 49],
+      ],
+    ],
   },
   // Eurasia
   {
-    name: 'Eurasia',
-    paths: [
+    name: 'Eurásia',
+    rings: [
       [
-        [70, 25], [75, 60], [75, 100], [72, 140], [65, 170], [55, 140],
-        [40, 120], [30, 122], [22, 114], [10, 105], [1, 104], [15, 95],
-        [22, 88], [10, 80], [25, 68], [25, 55], [30, 48], [35, 35],
-        [40, 28], [45, 13], [36, -5], [44, -1], [48, -4], [58, 5],
-        [60, 25], [70, 25]
+        [70, 28], [76, 60], [77, 105], [72, 140], [66, 170], [55, 140],
+        [43, 132], [38, 120], [30, 122], [22, 114], [14, 109], [1, 104],
+        [15, 96], [22, 89], [10, 79], [23, 69], [25, 56], [30, 48],
+        [36, 36], [41, 29], [46, 14], [36, -5], [44, -1], [48, -4],
+        [54, 8], [60, 10], [60, 25], [70, 28],
       ],
-      // UK
+      // Great Britain
       [
-        [58, -3], [50, 1], [50, -5], [58, -3]
+        [58, -4], [52, 1], [50, -5], [58, -4],
       ],
       // Japan
       [
-        [45, 142], [35, 140], [32, 130], [38, 138], [45, 142]
-      ]
-    ]
+        [44, 144], [35, 140], [33, 130], [38, 138], [44, 144],
+      ],
+    ],
   },
-  // Australia
+  // Australia & New Zealand
   {
-    name: 'Australia',
-    paths: [
+    name: 'Oceania',
+    rings: [
       [
-        [-12, 132], [-15, 136], [-25, 150], [-35, 150], [-38, 145],
-        [-35, 115], [-20, 114], [-15, 125], [-12, 132]
-      ]
-    ]
+        [-12, 132], [-14, 136], [-25, 151], [-37, 150], [-38, 140],
+        [-34, 115], [-22, 114], [-15, 124], [-12, 132],
+      ],
+    ],
   },
   // Antarctica
   {
-    name: 'Antarctica',
-    paths: [
+    name: 'Antártida',
+    rings: [
       [
-        [-65, -60], [-70, 0], [-68, 60], [-65, 120], [-70, 180],
-        [-72, -120], [-65, -60]
-      ]
-    ]
-  }
+        [-65, -60], [-70, -10], [-68, 60], [-66, 110], [-68, 150],
+        [-72, -170], [-72, -120], [-65, -60],
+      ],
+    ],
+  },
 ];
 
 export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
@@ -110,20 +113,20 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
   const [globeRotLon, setGlobeRotLon] = useState<number>(observer.longitude);
   const [isAutoTracking, setIsAutoTracking] = useState<boolean>(true);
 
-  // Position draggable state with localStorage persistence
+  // Position draggable state with safe initial placement inside viewport
   const { position, isDragging, elementRef, dragProps } = useDraggable({
-    storageKey: 'globe_widget',
+    storageKey: 'globe_widget_v2',
     initialPosition: {
-      x: typeof window !== 'undefined' ? Math.max(16, window.innerWidth - 200) : 200,
-      y: typeof window !== 'undefined' ? Math.max(16, window.innerHeight - 440) : 300,
+      x: typeof window !== 'undefined' ? Math.max(12, window.innerWidth - 170) : 180,
+      y: typeof window !== 'undefined' ? Math.max(60, window.innerHeight - 380) : 260,
     },
   });
 
-  // Drag rotation state for inside canvas
+  // Drag rotation state for 3D globe
   const isRotatingRef = useRef<boolean>(false);
   const lastMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // Sync with observer coordinates when tracking is active
+  // Sync with observer coordinates when auto-tracking is active
   useEffect(() => {
     if (isAutoTracking) {
       setGlobeRotLat(observer.latitude);
@@ -146,48 +149,56 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
+    const dpr = window.devicePixelRatio || 1;
+    const logicalSize = isExpanded ? 200 : 124;
+    const width = logicalSize;
+    const height = logicalSize;
     const centerX = width / 2;
     const centerY = height / 2;
-    const radius = Math.min(width, height) * 0.44;
+    const radius = logicalSize * 0.44;
 
-    ctx.clearRect(0, 0, width, height);
+    // Reset & set transform for Retina scale
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const deg2rad = Math.PI / 180;
-
     const centerLatRad = globeRotLat * deg2rad;
     const centerLonRad = globeRotLon * deg2rad;
 
-    // 3D Orthographic Projection function (lat, lon) -> (x, y, isFrontFacing)
-    const projectToGlobe = (
+    // 3D Orthographic Projection function (lat, lon) -> (x, y, visible, depth)
+    const project3D = (
       latDeg: number,
       lonDeg: number
     ): { x: number; y: number; visible: boolean; depth: number } => {
       const lat = latDeg * deg2rad;
       const lon = lonDeg * deg2rad;
 
-      // 3D Cartesian coordinates on sphere (R = 1)
-      const x3d = Math.cos(lat) * Math.sin(lon - centerLonRad);
-      const y3d =
-        Math.cos(centerLatRad) * Math.sin(lat) -
-        Math.sin(centerLatRad) * Math.cos(lat) * Math.cos(lon - centerLonRad);
-      const z3d =
-        Math.sin(centerLatRad) * Math.sin(lat) +
-        Math.cos(centerLatRad) * Math.cos(lat) * Math.cos(lon - centerLonRad);
+      const cosLat = Math.cos(lat);
+      const sinLat = Math.sin(lat);
+      const cosLonDiff = Math.cos(lon - centerLonRad);
+      const sinLonDiff = Math.sin(lon - centerLonRad);
 
-      const isVisible = z3d > 0;
+      const cosCenterLat = Math.cos(centerLatRad);
+      const sinCenterLat = Math.sin(centerLatRad);
+
+      // 3D Cartesian coordinates on unit sphere
+      const x3d = cosLat * sinLonDiff;
+      const y3d = cosCenterLat * sinLat - sinCenterLat * cosLat * cosLonDiff;
+      const z3d = sinCenterLat * sinLat + cosCenterLat * cosLat * cosLonDiff;
+
+      const visible = z3d > 0.02; // Small threshold to avoid edge clipping noise
       const screenX = centerX + x3d * radius;
       const screenY = centerY - y3d * radius;
 
-      return { x: screenX, y: screenY, visible: isVisible, depth: z3d };
+      return { x: screenX, y: screenY, visible, depth: z3d };
     };
 
-    // 1. Globe Base Ocean Gradient & Atmosphere Halo
+    // 1. Globe Base Ocean Gradient & Atmospheric Shading
     const oceanGrad = ctx.createRadialGradient(
-      centerX - radius * 0.3,
-      centerY - radius * 0.3,
-      radius * 0.2,
+      centerX - radius * 0.35,
+      centerY - radius * 0.35,
+      radius * 0.15,
       centerX,
       centerY,
       radius
@@ -195,12 +206,12 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
 
     if (isNightVision) {
       oceanGrad.addColorStop(0, '#2b0a0a');
-      oceanGrad.addColorStop(0.7, '#150303');
+      oceanGrad.addColorStop(0.65, '#140303');
       oceanGrad.addColorStop(1, '#050000');
     } else {
-      oceanGrad.addColorStop(0, '#0f2744');
-      oceanGrad.addColorStop(0.7, '#071526');
-      oceanGrad.addColorStop(1, '#030a14');
+      oceanGrad.addColorStop(0, '#0c2e59');
+      oceanGrad.addColorStop(0.7, '#071830');
+      oceanGrad.addColorStop(1, '#020813');
     }
 
     ctx.save();
@@ -209,19 +220,19 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     ctx.fillStyle = oceanGrad;
     ctx.fill();
 
-    // Clip to globe sphere for all internal drawing
+    // Clip to globe sphere for all internal features
     ctx.clip();
 
-    // 2. Latitude and Longitude Graticule (Parallels & Meridians)
+    // 2. Latitude & Longitude Graticule
     ctx.lineWidth = 0.75;
-    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.18)' : 'rgba(56, 189, 248, 0.15)';
+    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.18)' : 'rgba(56, 189, 248, 0.16)';
 
     // Parallels (every 30°)
     for (let lat = -60; lat <= 60; lat += 30) {
       ctx.beginPath();
       let started = false;
-      for (let lon = -180; lon <= 180; lon += 5) {
-        const pt = projectToGlobe(lat, lon);
+      for (let lon = -180; lon <= 180; lon += 4) {
+        const pt = project3D(lat, lon);
         if (pt.visible) {
           if (!started) {
             ctx.moveTo(pt.x, pt.y);
@@ -240,8 +251,8 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     for (let lon = -180; lon < 180; lon += 30) {
       ctx.beginPath();
       let started = false;
-      for (let lat = -85; lat <= 85; lat += 5) {
-        const pt = projectToGlobe(lat, lon);
+      for (let lat = -85; lat <= 85; lat += 4) {
+        const pt = project3D(lat, lon);
         if (pt.visible) {
           if (!started) {
             ctx.moveTo(pt.x, pt.y);
@@ -256,13 +267,13 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
       ctx.stroke();
     }
 
-    // Equator Line Highlight (Lat = 0°)
+    // Equator Line (Lat = 0°) Highlight
     ctx.lineWidth = 1.2;
-    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 211, 238, 0.35)';
+    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.45)' : 'rgba(34, 211, 238, 0.4)';
     ctx.beginPath();
     let eqStarted = false;
-    for (let lon = -180; lon <= 180; lon += 4) {
-      const pt = projectToGlobe(0, lon);
+    for (let lon = -180; lon <= 180; lon += 3) {
+      const pt = project3D(0, lon);
       if (pt.visible) {
         if (!eqStarted) {
           ctx.moveTo(pt.x, pt.y);
@@ -276,78 +287,89 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     }
     ctx.stroke();
 
-    // 3. Continents Landmass Polygons
-    ctx.fillStyle = isNightVision ? 'rgba(185, 28, 28, 0.45)' : 'rgba(34, 197, 94, 0.35)';
-    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.7)' : 'rgba(74, 222, 128, 0.65)';
-    ctx.lineWidth = 1;
+    // 3. Continents Landmass Polygons (Segment-based to prevent cross-sphere slicing)
+    ctx.fillStyle = isNightVision ? 'rgba(185, 28, 28, 0.4)' : 'rgba(34, 197, 94, 0.32)';
+    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.75)' : 'rgba(74, 222, 128, 0.7)';
+    ctx.lineWidth = 1.0;
 
-    CONTINENTS_GEO.forEach((continent) => {
-      continent.paths.forEach((polygon) => {
+    CONTINENTS_DATA.forEach((continent) => {
+      continent.rings.forEach((ring) => {
+        // Step 1: Stroke visible segment paths
         ctx.beginPath();
-        let pathStarted = false;
+        for (let i = 0; i < ring.length; i++) {
+          const p1 = ring[i];
+          const p2 = ring[(i + 1) % ring.length];
+          const pt1 = project3D(p1[0], p1[1]);
+          const pt2 = project3D(p2[0], p2[1]);
 
-        polygon.forEach(([lat, lon]) => {
-          const pt = projectToGlobe(lat, lon);
+          if (pt1.visible && pt2.visible) {
+            ctx.moveTo(pt1.x, pt1.y);
+            ctx.lineTo(pt2.x, pt2.y);
+          }
+        }
+        ctx.stroke();
+
+        // Step 2: Fill contiguous visible polygon
+        ctx.beginPath();
+        let fillStarted = false;
+        ring.forEach(([lat, lon]) => {
+          const pt = project3D(lat, lon);
           if (pt.visible) {
-            if (!pathStarted) {
+            if (!fillStarted) {
               ctx.moveTo(pt.x, pt.y);
-              pathStarted = true;
+              fillStarted = true;
             } else {
               ctx.lineTo(pt.x, pt.y);
             }
           }
         });
-
-        if (pathStarted) {
-          ctx.closePath();
+        if (fillStarted) {
           ctx.fill();
-          ctx.stroke();
         }
       });
     });
 
     // 4. Solar Day/Night Terminator Shading
     const subsolar = calculateSubsolarPoint(new Date());
-    const sunPt = projectToGlobe(subsolar.latitude, subsolar.longitude);
+    const sunPt = project3D(subsolar.latitude, subsolar.longitude);
 
-    // Create night hemisphere shadow overlay
     const shadowGrad = ctx.createRadialGradient(
       sunPt.x,
       sunPt.y,
-      radius * 0.4,
+      radius * 0.35,
       sunPt.x,
       sunPt.y,
       radius * 1.8
     );
     shadowGrad.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    shadowGrad.addColorStop(0.5, 'rgba(0, 0, 0, 0.15)');
+    shadowGrad.addColorStop(0.5, 'rgba(0, 0, 0, 0.12)');
     shadowGrad.addColorStop(0.8, 'rgba(0, 0, 0, 0.65)');
-    shadowGrad.addColorStop(1, 'rgba(0, 0, 0, 0.85)');
+    shadowGrad.addColorStop(1, 'rgba(0, 0, 0, 0.88)');
 
     ctx.fillStyle = shadowGrad;
     ctx.fillRect(0, 0, width, height);
 
-    // Draw Subsolar Sun point marker if visible
+    // Subsolar Sun point marker
     if (sunPt.visible) {
       ctx.fillStyle = '#fbbf24';
       ctx.beginPath();
-      ctx.arc(sunPt.x, sunPt.y, 4, 0, Math.PI * 2);
+      ctx.arc(sunPt.x, sunPt.y, 3.5, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.strokeStyle = 'rgba(251, 191, 36, 0.6)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(sunPt.x, sunPt.y, 7, 0, Math.PI * 2);
+      ctx.arc(sunPt.x, sunPt.y, 6.5, 0, Math.PI * 2);
       ctx.stroke();
     }
 
     // 5. Observer Location Marker & Viewing Azimuth Vector
-    const obsPt = projectToGlobe(observer.latitude, observer.longitude);
+    const obsPt = project3D(observer.latitude, observer.longitude);
 
     if (obsPt.visible) {
       // Horizon coverage circle around observer
       ctx.lineWidth = 1;
-      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.5)' : 'rgba(34, 211, 238, 0.5)';
+      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.6)' : 'rgba(34, 211, 238, 0.55)';
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.arc(obsPt.x, obsPt.y, radius * 0.22, 0, Math.PI * 2);
@@ -356,7 +378,7 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
 
       // Heading Vector Line (Direction user is pointing the device into the sky)
       const headingRad = (orientation.heading - 90) * deg2rad;
-      const arrowLen = radius * 0.25;
+      const arrowLen = radius * 0.26;
       const arrowEndX = obsPt.x + Math.cos(headingRad) * arrowLen;
       const arrowEndY = obsPt.y + Math.sin(headingRad) * arrowLen;
 
@@ -373,10 +395,10 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
       ctx.arc(arrowEndX, arrowEndY, 2.5, 0, Math.PI * 2);
       ctx.fill();
 
-      // Observer glowing pinpoint
+      // Observer pinpoint
       ctx.fillStyle = isNightVision ? '#ef4444' : '#38bdf8';
       ctx.beginPath();
-      ctx.arc(obsPt.x, obsPt.y, 4.5, 0, Math.PI * 2);
+      ctx.arc(obsPt.x, obsPt.y, 4, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.strokeStyle = '#ffffff';
@@ -387,13 +409,13 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
       ctx.fillStyle = isNightVision ? '#fca5a5' : '#ffffff';
       ctx.font = 'bold 9px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText('VOCÊ', obsPt.x, obsPt.y - 8);
+      ctx.fillText('VOCÊ', obsPt.x, obsPt.y - 7);
     }
 
     ctx.restore();
 
-    // 6. Outer Atmospheric Glow Ring
-    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.5)' : 'rgba(56, 189, 248, 0.5)';
+    // 6. Outer Atmospheric Halo Ring
+    ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.6)' : 'rgba(56, 189, 248, 0.6)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
@@ -405,6 +427,7 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     observer.longitude,
     orientation.heading,
     isNightVision,
+    isExpanded,
   ]);
 
   // Handle Canvas Resize & Draw
@@ -412,16 +435,16 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
-    const size = isExpanded ? 220 : 130;
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    const ctx = canvas.getContext('2d');
-    if (ctx) ctx.scale(dpr, dpr);
+    const logicalSize = isExpanded ? 200 : 124;
+    canvas.width = Math.floor(logicalSize * dpr);
+    canvas.height = Math.floor(logicalSize * dpr);
+    canvas.style.width = `${logicalSize}px`;
+    canvas.style.height = `${logicalSize}px`;
 
     renderGlobe();
   }, [renderGlobe, isExpanded]);
 
-  // Mouse / Touch Rotation inside canvas (prevent dragging whole modal)
+  // Mouse & Touch Rotation handlers
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     e.stopPropagation();
     isRotatingRef.current = true;
@@ -437,11 +460,11 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     lastMouseRef.current = { x: e.clientX, y: e.clientY };
 
     setGlobeRotLon((prev) => {
-      let next = prev - dx * 0.6;
+      let next = prev - dx * 0.7;
       return ((next + 180) % 360 + 360) % 360 - 180;
     });
 
-    setGlobeRotLat((prev) => Math.max(-80, Math.min(80, prev + dy * 0.6)));
+    setGlobeRotLat((prev) => Math.max(-80, Math.min(80, prev + dy * 0.7)));
   };
 
   const handleCanvasMouseUp = (e: React.MouseEvent) => {
@@ -451,7 +474,6 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     }
   };
 
-  // Touch handlers for sphere rotation
   const handleCanvasTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       e.stopPropagation();
@@ -469,11 +491,11 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
     lastMouseRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
 
     setGlobeRotLon((prev) => {
-      let next = prev - dx * 0.6;
+      let next = prev - dx * 0.7;
       return ((next + 180) % 360 + 360) % 360 - 180;
     });
 
-    setGlobeRotLat((prev) => Math.max(-80, Math.min(80, prev + dy * 0.6)));
+    setGlobeRotLat((prev) => Math.max(-80, Math.min(80, prev + dy * 0.7)));
   };
 
   const handleCanvasTouchEnd = (e: React.TouchEvent) => {
@@ -507,7 +529,7 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
           isNightVision
             ? 'bg-black/90 border-red-900/60 shadow-[0_0_25px_rgba(239,68,68,0.25)]'
             : 'bg-[#08080a]/95 border-zinc-800/90 shadow-[0_0_30px_rgba(0,0,0,0.85)]'
-        } ${isExpanded ? 'p-3 w-60 sm:w-64' : 'p-2 w-36 sm:w-40'}`}
+        } ${isExpanded ? 'p-3 w-56 sm:w-60' : 'p-2 w-36 sm:w-40'}`}
       >
         {/* Header with drag handle */}
         <div
@@ -519,7 +541,7 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
             <Move className="w-2.5 h-2.5 text-zinc-500 hover:text-cyan-400 transition" />
             <Globe className={`w-3 h-3 ${isNightVision ? 'text-red-400' : 'text-cyan-400'}`} />
             <span className="text-[9px] font-mono font-bold tracking-wider uppercase text-zinc-300">
-              GLOBO TERRESTRE
+              GLOBO 3D
             </span>
           </div>
 
@@ -552,7 +574,7 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
         {/* 3D Canvas Globe */}
         <div
           className={`relative flex items-center justify-center cursor-grab active:cursor-grabbing ${
-            isExpanded ? 'w-[220px] h-[220px]' : 'w-[130px] h-[130px]'
+            isExpanded ? 'w-[200px] h-[200px]' : 'w-[124px] h-[124px]'
           }`}
           onMouseDown={handleCanvasMouseDown}
           onMouseMove={handleCanvasMouseMove}
@@ -564,8 +586,7 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
         >
           <canvas
             ref={canvasRef}
-            style={{ width: isExpanded ? 220 : 130, height: isExpanded ? 220 : 130 }}
-            className="rounded-full block"
+            className="rounded-full block pointer-events-none"
           />
         </div>
 
@@ -574,18 +595,18 @@ export const EarthGlobeWidget: React.FC<EarthGlobeWidgetProps> = ({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1">
               <MapPin className="w-2.5 h-2.5 text-cyan-400" />
-              <span>{observer.cityName || 'Local Atual'}</span>
+              <span className="truncate max-w-[90px]">{observer.cityName || 'Local Atual'}</span>
             </div>
             <span className="text-zinc-300">
-              {observer.latitude.toFixed(1)}° Lat, {observer.longitude.toFixed(1)}° Lon
+              {observer.latitude.toFixed(1)}° • {observer.longitude.toFixed(1)}°
             </span>
           </div>
 
           {isExpanded && (
             <div className="flex items-center justify-between text-zinc-500 pt-0.5 border-t border-zinc-800/50">
-              <span>TSL (Sideral): {lstHours}h {lstMinutes}m</span>
+              <span>TSL: {lstHours}h {lstMinutes}m</span>
               <span className="text-cyan-400 font-semibold">
-                DIREÇÃO: {Math.round(orientation.heading)}°
+                RUMO: {Math.round(orientation.heading)}°
               </span>
             </div>
           )}

@@ -104,6 +104,9 @@ export function useDeviceSensors() {
       } catch (err) {
         console.warn('Orientation permission error:', err);
       }
+    } else {
+      setNeedsIosPermission(false);
+      setIsManualControl(false);
     }
   }, []);
 
@@ -119,26 +122,28 @@ export function useDeviceSensors() {
     }
 
     const handleOrientation = (e: DeviceOrientationEvent) => {
+      // If manual override was active, real sensor input can still be received once reset
       if (isManualControl) return;
 
       let compassHeading: number | null = null;
       let pitch: number | null = null;
       let roll: number | null = null;
 
-      // iOS webkitCompassHeading
+      // 1. iOS webkitCompassHeading (0 = North, clockwise 0..360)
       if ((e as any).webkitCompassHeading != null) {
         compassHeading = (e as any).webkitCompassHeading;
       } else if (e.alpha != null) {
-        // Standard alpha (0 to 360)
-        compassHeading = 360 - e.alpha;
+        // Standard alpha (0 to 360) - on Android Chrome / desktop
+        // (360 - alpha) converts from counter-clockwise to clockwise compass heading
+        compassHeading = (360 - e.alpha) % 360;
       }
 
-      // Beta (-180 to 180): device pitch front-to-back
-      // When phone is held vertically pointing at horizon: beta ~ 90 deg -> altitude = 0
+      // 2. Beta (-180 to 180): device pitch front-to-back
+      // When phone is vertical facing horizon: beta ~ 90 deg -> altitude = 0
       // When phone is pointing up to zenith: beta ~ 0 deg -> altitude = 90
+      // When phone is held flat on table screen up: beta ~ 0 deg
       if (e.beta != null) {
         const rawBeta = e.beta;
-        // Map beta to astronomical altitude
         pitch = 90 - rawBeta;
         if (pitch < -90) pitch = -90;
         if (pitch > 90) pitch = 90;
@@ -148,18 +153,17 @@ export function useDeviceSensors() {
         roll = e.gamma;
       }
 
-      if (compassHeading != null && pitch != null) {
-        // Smooth interpolation (lerp)
+      if (compassHeading != null) {
         const targetHeading = ((compassHeading % 360) + 360) % 360;
-        const targetPitch = Math.max(-90, Math.min(90, pitch));
+        const targetPitch = pitch != null ? Math.max(-90, Math.min(90, pitch)) : currentPitchRef.current;
 
-        // Handle 360/0 degree wraparound smoothly
+        // Smooth interpolation (lerp) with angle wraparound
         let diff = targetHeading - currentHeadingRef.current;
         if (diff > 180) diff -= 360;
         if (diff < -180) diff += 360;
 
-        currentHeadingRef.current = (currentHeadingRef.current + diff * 0.35 + 360) % 360;
-        currentPitchRef.current = currentPitchRef.current + (targetPitch - currentPitchRef.current) * 0.35;
+        currentHeadingRef.current = (currentHeadingRef.current + diff * 0.4 + 360) % 360;
+        currentPitchRef.current = currentPitchRef.current + (targetPitch - currentPitchRef.current) * 0.4;
 
         setOrientation({
           heading: currentHeadingRef.current,

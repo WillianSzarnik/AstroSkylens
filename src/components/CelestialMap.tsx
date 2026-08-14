@@ -133,16 +133,17 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       // -------------------------------------------------------------
       // Observer is at the center (Zenith = 90° Alt).
       // Radius reaches 0° Alt at the Horizon circle.
+      // Rotates dynamically so the direction you are facing (viewHeading) is at the top.
       const domeRadius = Math.min(width, height) * 0.42 * zoomLevel;
 
       project = (azDeg: number, altDeg: number) => {
         const zenithAngleDeg = Math.max(0, 90 - altDeg); // 0 at zenith, 90 at horizon, >90 below
         const r = (zenithAngleDeg / 90) * domeRadius;
 
-        // North (Az 0°) at top, East (Az 90°) at left (astronomical looking up)
-        const azRad = ((azDeg - 90) * Math.PI) / 180;
-        const x = centerX + r * Math.cos(azRad);
-        const y = centerY + r * Math.sin(azRad);
+        // Relative azimuth: current heading is aligned to the top (-90 deg / -PI/2)
+        const relAzRad = ((azDeg - viewHeading - 90) * Math.PI) / 180;
+        const x = centerX + r * Math.cos(relAzRad);
+        const y = centerY + r * Math.sin(relAzRad);
 
         const inView = x >= -50 && x <= width + 50 && y >= -50 && y <= height + 50;
         return { x, y, inView };
@@ -166,9 +167,9 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
           ctx.fillText(`ALT ${alt}°`, centerX, centerY - r + 11);
         });
 
-        // Azimuth Spokes (N, NE, E, SE, S, SW, W, NW)
+        // Azimuth Spokes (N, NE, E, SE, S, SW, W, NW) rotating with heading
         for (let az = 0; az < 360; az += 45) {
-          const rad = ((az - 90) * Math.PI) / 180;
+          const rad = ((az - viewHeading - 90) * Math.PI) / 180;
           ctx.beginPath();
           ctx.moveTo(centerX, centerY);
           ctx.lineTo(centerX + domeRadius * Math.cos(rad), centerY + domeRadius * Math.sin(rad));
@@ -192,7 +193,7 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       ctx.lineWidth = 6;
       ctx.stroke();
 
-      // Cardinal Points along Horizon Rim
+      // Cardinal Points along Horizon Rim (Dynamically rotating with Gyroscope Heading)
       const cardinals = [
         { name: 'N', az: 0 },
         { name: 'NE', az: 45 },
@@ -205,13 +206,17 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       ];
 
       cardinals.forEach((c) => {
-        const rad = ((c.az - 90) * Math.PI) / 180;
+        const rad = ((c.az - viewHeading - 90) * Math.PI) / 180;
         const tagRadius = domeRadius + 14;
         const tagX = centerX + tagRadius * Math.cos(rad);
         const tagY = centerY + tagRadius * Math.sin(rad);
 
-        ctx.fillStyle = isNightVision ? '#ef4444' : '#22d3ee';
-        ctx.font = 'bold 10px monospace';
+        ctx.fillStyle = c.name === 'N' 
+          ? (isNightVision ? '#ef4444' : '#38bdf8') 
+          : (isNightVision ? '#fca5a5' : '#94a3b8');
+        ctx.font = c.name === 'N' || c.name === 'S' || c.name === 'L' || c.name === 'O' 
+          ? 'bold 11px monospace' 
+          : '9px monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(c.name, tagX, tagY);
@@ -225,34 +230,49 @@ export const CelestialMap: React.FC<CelestialMapProps> = ({
       ctx.font = 'bold 8px monospace';
       ctx.fillText('ZÊNITE (90°)', centerX, centerY + 12);
 
-      // 3. Aiming Cone / Gyroscope Device Sight Line
-      const headingRad = ((viewHeading - 90) * Math.PI) / 180;
+      // 3. Aiming Cone / Gyroscope Device Sight Line (Top of Screen in direction of view)
       const pitchOffset = Math.max(0, (90 - viewPitch) / 90) * domeRadius;
-      const sightTargetX = centerX + pitchOffset * Math.cos(headingRad);
-      const sightTargetY = centerY + pitchOffset * Math.sin(headingRad);
+      const sightTargetX = centerX;
+      const sightTargetY = centerY - pitchOffset;
 
-      // Beam from zenith towards current aim direction
+      // Beam from zenith towards current aim altitude in front of device
       ctx.save();
       const beamGrad = ctx.createLinearGradient(centerX, centerY, sightTargetX, sightTargetY);
-      beamGrad.addColorStop(0, 'rgba(34, 211, 238, 0.05)');
-      beamGrad.addColorStop(1, isNightVision ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 211, 238, 0.45)');
+      beamGrad.addColorStop(0, 'rgba(34, 211, 238, 0.04)');
+      beamGrad.addColorStop(1, isNightVision ? 'rgba(239, 68, 68, 0.35)' : 'rgba(34, 211, 238, 0.35)');
       ctx.fillStyle = beamGrad;
       ctx.beginPath();
       ctx.moveTo(centerX, centerY);
-      ctx.arc(centerX, centerY, pitchOffset, headingRad - 0.22, headingRad + 0.22);
+      ctx.arc(centerX, centerY, pitchOffset, -Math.PI / 2 - 0.25, -Math.PI / 2 + 0.25);
       ctx.closePath();
       ctx.fill();
 
+      // Sight Line from Center to Aim Reticle
+      ctx.strokeStyle = isNightVision ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 211, 238, 0.4)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.lineTo(sightTargetX, sightTargetY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
       // Reticle at Phone's exact pointing location
       ctx.strokeStyle = isNightVision ? '#ef4444' : '#22d3ee';
-      ctx.lineWidth = 1.8;
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(sightTargetX, sightTargetY, 11, 0, Math.PI * 2);
+      ctx.arc(sightTargetX, sightTargetY, 12, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(sightTargetX, sightTargetY, 2.5, 0, Math.PI * 2);
+      ctx.arc(sightTargetX, sightTargetY, 3, 0, Math.PI * 2);
       ctx.fillStyle = isNightVision ? '#ef4444' : '#22d3ee';
       ctx.fill();
+
+      // Heading and Pitch HUD indicator inside Planisphere
+      ctx.fillStyle = isNightVision ? '#fca5a5' : '#22d3ee';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${Math.round(viewHeading)}° • ALT ${Math.round(viewPitch)}°`, sightTargetX, sightTargetY - 16);
       ctx.restore();
     } else {
       // -------------------------------------------------------------
